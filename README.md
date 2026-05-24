@@ -81,24 +81,70 @@ sequenceDiagram
 
 ---
 
-## 🛡️ Thiết Kế Bảo Mật & Phòng Chống Tấn Công (Security Constraints)
+## 🌟 Các Tính Năng Nổi Bật Mới (Core Features)
 
-Hệ thống được thiết kế với các cơ chế phòng ngự nghiêm ngặt:
-* **Prompt Injection Defense**: Toàn bộ dữ liệu transcript thu được từ cuộc họp được bao bọc chặt chẽ bên trong các thẻ XML `<transcript>...</transcript>`. Hệ thống thiết lập chỉ thị bảo mật cấp hệ thống (System Instructions) yêu cầu Gemini bỏ qua mọi câu lệnh điều hướng, yêu cầu giả danh hoặc thay đổi hành vi nằm bên trong transcript.
-* **Mã hóa hiển thị API Key**: Khóa Gemini API Key được ẩn đi (`type="password"`) trên giao diện cấu hình và lưu trực tiếp trong bộ nhớ cục bộ của trình duyệt, không bao giờ gửi qua bất kỳ máy chủ trung gian nào khác.
-* **Kiểm soát ngữ cảnh (Context Validation)**: Ngăn chặn triệt để lỗi `Extension context invalidated` khi extension cập nhật bằng cách bao bọc các cuộc gọi API bằng bộ lọc trạng thái chủ động, hướng dẫn người dùng F5 an toàn khi phát hiện đứt kết nối tiện ích.
+Tiện ích đã được nâng cấp mạnh mẽ với các tính năng cốt lõi vượt trội:
+
+### 1. Chế độ Thu Thập Phụ Đề Trực Tiếp ("Lấy theo Google Meet")
+* **Không cần Audio input**: Hoạt động hoàn hảo mà không cần mở kết nối WebSocket STT hay thu âm hệ thống, tiết kiệm tối đa băng thông và tài nguyên CPU.
+* **Cơ chế Active Node Tracking**: Giải quyết triệt để lỗi "auto-correct" (Google STT liên tục thay đổi nội dung từ ngữ trong cùng một thẻ trước khi người nói dừng lại). ScribeAI gán nhãn duy nhất (`blockKey`) cho mỗi khối phát biểu, cho phép ghi đè in-place văn bản theo thời gian thực trực tiếp trên bảng điều khiển **Live logs** và IndexedDB/Local Storage.
+
+### 2. Tự Động Kích Hoạt Phụ Đề Thông Minh (Agnostic CC Auto-Enabler)
+* **Vượt qua rào cản ngôn ngữ**: Không cần quan tâm người dùng thiết lập ngôn ngữ giao diện Google Meet là tiếng Việt ("Bật phụ đề"), tiếng Anh ("Turn on captions"), hay bất kỳ tiếng nào khác.
+* **SVG Icon Fingerprinting**: Hệ thống tự động quét bản đồ tọa độ SVG của nút Closed Caption chuẩn Material Design (`M19 4H5...`) trên thanh công cụ và mô phỏng sự kiện `.click()` để tự động kích hoạt phụ đề ngay khi người dùng bắt đầu ghi âm.
+
+### 3. Xuất Báo Cáo Công Việc sang Excel (Action Items Excel Export)
+* **Tích hợp nút "Xuất Excel"**: Xuất hiện trực quan ngay trong tab **AI Summary** tại phần báo cáo nhiệm vụ.
+* **Chuẩn hóa UTF-8 BOM**: Tự động chèn ký tự Byte Order Mark (`\uFEFF`) để đảm bảo các ký tự tiếng Việt có dấu được hiển thị hoàn hảo, không bao giờ bị lỗi font khi mở trực tiếp bằng Microsoft Excel.
+* **Báo cáo cấu trúc**: File xuất ra gồm 4 cột chuyên nghiệp: `assignee` (Người nhận việc), `task` (Nội dung công việc), `deadline` (Hạn chót), và cột chọn trạng thái `Status` (To Do, In Progress, Done).
+
+### 4. Ưu Tiên Phản Hồi Tiếng Việt (Vietnamese-First JSON Schema)
+* Cấu trúc Prompt hệ thống ép buộc Gemini trả về định dạng JSON thuần Việt 100% giúp báo cáo tổng kết cuộc họp đạt độ tự nhiên cao, mạch lạc và sát nghĩa nhất với văn hóa hội họp tại Việt Nam.
 
 ---
 
-## 🚀 Hướng Dẫn Sử Dụng Nhanh
+## 🛠️ Hướng Dẫn Cài Đặt & Khởi Động Dự Án
+
+Dự án đã được tự động hóa quy trình khởi động cục bộ, giúp bạn thiết lập chỉ trong vài giây.
+
+### 📋 Bước 1: Thiết Lập Môi Trường
+1. Yêu cầu máy tính đã cài đặt **NodeJS** (phiên bản 18+ khuyến nghị).
+2. Tải mã nguồn dự án về máy tính của bạn.
+3. Sở hữu một khóa **Google Gemini API Key** (tạo miễn phí tại [Google AI Studio](https://aistudio.google.com/)).
+
+### ⚡ Bước 2: Khởi Động Nhanh Với `run.bat`
+Không cần phải mở terminal thủ công và gõ các lệnh phức tạp, bạn chỉ cần thực hiện:
+1. Tìm tệp **`run.bat`** ở thư mục gốc của dự án.
+2. Kích đúp chuột (Double-click) vào tệp này.
+3. Một cửa sổ Terminal chuyên dụng sẽ tự động được mở và khởi chạy máy chủ WebSocket STT Server (`node server.js`) trên cổng mặc định `8080`.
+
+### 🧩 Bước 3: Nạp Tiện Ích Vào Trình Duyệt Chrome
+1. Mở trình duyệt Google Chrome và truy cập đường dẫn: `chrome://extensions/`.
+2. Bật chế độ nhà phát triển (**Developer mode**) ở góc trên cùng bên phải.
+3. Nhấp vào nút **Load unpacked** (Tải tiện ích đã giải nén).
+4. Tìm và chọn thư mục chứa mã nguồn của extension này (`gemini-meeting-recorder-extension`).
+5. Tiện ích **Gemini Scribe** sẽ lập tức xuất hiện trên thanh công cụ của bạn!
+
+---
+
+## 🎮 Quy Trình Chạy Chức Năng (End-to-End Workflow)
 
 1. **Cấu hình ban đầu**:
-   * Nhấp vào biểu tượng Extension, nhập **Gemini API Key** của bạn.
-   * Chọn model mong muốn (khuyên dùng mặc định `gemini-3.1-flash-lite-preview`).
-   * Điền địa chỉ WebSocket của STT Server (ví dụ: `ws://localhost:8080/stt`).
+   * Bấm vào biểu tượng Extension trên thanh công cụ.
+   * Nhập **Gemini API Key** của bạn.
+   * Chọn model ưa thích (khuyên dùng `gemini-3.1-flash-lite-preview`).
    * Bấm **Save Settings**.
-2. **Trong cuộc họp**:
-   * Truy cập trang Google Meet bất kỳ.
-   * Bảng điều khiển **Gemini Scribe** sẽ tự động hiển thị ở góc màn hình.
-   * Bấm **Start Recording** để bắt đầu. Bạn sẽ thấy văn bản cuộc họp xuất hiện trực tiếp (Live Transcript).
-   * Khi cuộc họp kết thúc, bấm **Stop Recording** để nhận bản báo cáo thông minh gồm: Chủ đề chính, Quyết định cuối cùng và Danh sách công việc (Action Items) được phân bổ chi tiết!
+2. **Kích hoạt ghi âm**:
+   * Truy cập vào một phòng họp Google Meet bất kỳ.
+   * Bảng điều khiển nổi **Gemini Scribe** sẽ tự động xuất hiện ở góc màn hình.
+   * Chọn chế độ thu dữ liệu tại menu lựa chọn **Capture Mode**:
+     * **Mặc định (WebSocket)**: Thu âm song song cả micro và âm thanh cuộc họp.
+     * **Lấy theo Google Meet**: Sử dụng thuật toán quét phụ đề DOM thời gian thực siêu nhẹ.
+   * Bấm **Start Recording** để bắt đầu. Hệ thống sẽ tự động bật phụ đề CC của Google Meet và hiển thị cuộc thoại trực tiếp tại tab **Live logs**.
+3. **Quản lý phiên ghi âm**:
+   * Trong lúc ghi âm, bạn có thể bấm **Hủy bỏ** để dừng ngay lập tức, dọn dẹp sạch bộ nhớ đệm IndexedDB/Chrome Storage và xóa trạng thái ghi âm mà không để lại dữ liệu rác.
+4. **Tóm tắt & Xuất báo cáo**:
+   * Bấm **Stop & Summary** khi cuộc họp kết thúc.
+   * Tiện ích sẽ đóng offscreen/observer, kích hoạt luồng AI Rolling Summary của Gemini và tự động chuyển sang tab **AI Summary**.
+   * Đọc báo cáo tóm tắt cuộc họp và bấm nút **Xuất Excel** để lưu danh sách Task & Action Items về máy tính định dạng `.csv` siêu mượt!
+
