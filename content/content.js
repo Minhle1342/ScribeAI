@@ -556,15 +556,20 @@
         const assignee = action.assignee || 'Unassigned';
         const deadline = action.deadline || 'Not specified';
         actionsHtml += `
-          <div class="scribe-action-item">
-            <div class="scribe-action-checkbox">☑️</div>
-            <div class="scribe-action-details">
-              <div class="scribe-action-task">${escapeHtml(action.task)}</div>
-              <div class="scribe-action-meta">
+          <div class="scribe-action-item" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+            <div class="scribe-action-details" style="flex: 1; min-width: 0;">
+              <div class="scribe-action-task" style="word-break: break-word;">${escapeHtml(action.task)}</div>
+              <div class="scribe-action-meta" style="margin-top: 4px;">
                 <span class="scribe-pill scribe-pill-assignee">${escapeHtml(assignee)}</span>
                 <span class="scribe-pill scribe-pill-deadline">📅 ${escapeHtml(deadline)}</span>
               </div>
             </div>
+            <!-- Status Dropdown Select -->
+            <select class="scribe-action-status" data-task="${escapeHtml(action.task)}" data-assignee="${escapeHtml(assignee)}" data-deadline="${escapeHtml(deadline)}">
+              <option value="To Do" selected>To Do</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Done">Done</option>
+            </select>
           </div>
         `;
       });
@@ -588,10 +593,62 @@
 
       <!-- Action Items Section -->
       <section class="scribe-summary-section">
-        <h3 class="scribe-section-title">🚀 Tasks & Action Items</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px;">
+          <h3 class="scribe-section-title" style="margin-bottom: 0;">🚀 Tasks & Action Items</h3>
+          <button id="scribe-export-excel-btn" class="scribe-export-btn" title="Xuất danh sách sang Microsoft Excel">
+            📥 Xuất Excel
+          </button>
+        </div>
         ${actionsHtml}
       </section>
     `;
+
+    // Bind Export Excel event
+    const exportBtn = document.getElementById('scribe-export-excel-btn');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', () => {
+        const statusSelects = document.querySelectorAll('.scribe-action-status');
+        if (statusSelects.length === 0) {
+          alert('Không có Task & Action items nào để xuất!');
+          return;
+        }
+
+        const items = [];
+        statusSelects.forEach(select => {
+          items.push({
+            assignee: select.getAttribute('data-assignee') || '',
+            task: select.getAttribute('data-task') || '',
+            deadline: select.getAttribute('data-deadline') || '',
+            status: select.value
+          });
+        });
+
+        // Generate CSV file content with BOM to support Vietnamese character displays in Excel
+        const BOM = '\uFEFF';
+        let csvContent = BOM + 'assignee,task,deadline,Status\r\n';
+        items.forEach(item => {
+          const row = [
+            `"${item.assignee.replace(/"/g, '""')}"`,
+            `"${item.task.replace(/"/g, '""')}"`,
+            `"${item.deadline.replace(/"/g, '""')}"`,
+            `"${item.status.replace(/"/g, '""')}"`
+          ].join(',');
+          csvContent += row + '\r\n';
+        });
+
+        // Trigger safe file download in browser
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const timestamp = new Date().toISOString().slice(0, 10);
+        link.href = url;
+        link.setAttribute('download', `ScribeAI_Action_Items_${timestamp}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      });
+    }
   }
   /**
    * ═══════════════════════════════════════════════════════════════════
