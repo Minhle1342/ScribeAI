@@ -668,6 +668,63 @@
    */
 
   /**
+   * Agnostic Closed Caption (CC) Auto-Enabler
+   * Scans buttons in the Google Meet toolbar to locate and click the caption toggle.
+   * Utilizes language-independent SVG paths (Material Design CC icon coordinates)
+   * and generic attribute string patterns.
+   */
+  function ensureGoogleMeetCCEnabled() {
+    // 1. If the caption container already exists, captions are active.
+    const captionContainer = document.querySelector('div[role="region"][aria-label="Phụ đề"]')
+                          || document.querySelector('div[role="region"][aria-label="Captions"]')
+                          || document.querySelector('div.vNKgIf')
+                          || document.querySelector('div[aria-live="polite"]');
+    if (captionContainer) {
+      console.log('[Scribe CC] Captions are already active.');
+      return;
+    }
+
+    console.log('[Scribe CC] Attempting to auto-enable closed captions...');
+
+    // 2. Scan toolbar buttons
+    const buttons = document.querySelectorAll('button');
+    for (const btn of buttons) {
+      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+      const tooltip = (btn.getAttribute('data-tooltip') || '').toLowerCase();
+
+      // Heuristic A: Aria-label or Tooltip matching common CC indicators across EN/VI
+      if (
+        ariaLabel.includes('caption') || ariaLabel.includes('phụ đề') || ariaLabel.includes(' phụ đề') ||
+        tooltip.includes('caption') || tooltip.includes('phụ đề') ||
+        ariaLabel === 'cc' || tooltip === 'cc'
+      ) {
+        console.log('[Scribe CC] Found CC toggle via label/tooltip:', btn);
+        btn.click();
+        return;
+      }
+
+      // Heuristic B: SVG path fingerprinting (Material Design Closed Caption button)
+      const paths = btn.querySelectorAll('path');
+      for (const path of paths) {
+        const d = path.getAttribute('d') || '';
+        
+        // CC bounding box or characters path coordinates standard coordinates
+        if (
+          d.includes('M19 4H5') || 
+          d.includes('M20 4H4') || 
+          d.includes('19H5V5h14v14z') || 
+          d.includes('M19,4H5C3.89,4') ||
+          d.includes('M19 4c1.1 0 2')
+        ) {
+          console.log('[Scribe CC] Found CC toggle via SVG icon fingerprint:', btn);
+          btn.click();
+          return;
+        }
+      }
+    }
+  }
+
+  /**
    * Start observing Google Meet's caption container for real-time text changes.
    */
   function startGmeetCaptionObserver() {
@@ -675,57 +732,64 @@
     stopGmeetCaptionObserver();
     lastCaptionTexts.clear();
 
+    // Auto-enable captions seamlessly before observing
+    ensureGoogleMeetCCEnabled();
+
     console.log('[Scribe GMeet] Starting Google Meet caption observer...');
 
-    // Find the caption region container
-    const captionContainer = document.querySelector('div[role="region"][aria-label="Phụ đề"]')
-                          || document.querySelector('div[role="region"][aria-label="Captions"]')
-                          || document.querySelector('div.vNKgIf');
+    // Short timeout to allow Google Meet UI to mount the caption DOM elements if clicked
+    setTimeout(() => {
+      // Find the caption region container
+      const captionContainer = document.querySelector('div[role="region"][aria-label="Phụ đề"]')
+                            || document.querySelector('div[role="region"][aria-label="Captions"]')
+                            || document.querySelector('div.vNKgIf')
+                            || document.querySelector('div[aria-live="polite"]');
 
-    if (!captionContainer) {
-      console.warn('[Scribe GMeet] Caption container not found. Make sure Google Meet captions (CC) are turned ON.');
-      appendLiveTranscript('⚠️ Không tìm thấy vùng phụ đề Google Meet. Hãy bật phụ đề (CC) trong Google Meet trước khi sử dụng chế độ này.');
-      return;
-    }
+      if (!captionContainer) {
+        console.warn('[Scribe GMeet] Caption container not found. Make sure Google Meet captions (CC) are turned ON.');
+        appendLiveTranscript('⚠️ Không tìm thấy vùng phụ đề Google Meet. Hãy bật phụ đề (CC) trong Google Meet trước khi sử dụng chế độ này.');
+        return;
+      }
 
-    console.log('[Scribe GMeet] Caption container found. Attaching MutationObserver...');
-    appendLiveTranscript('✅ Đã kết nối với phụ đề Google Meet. Đang lắng nghe...');
+      console.log('[Scribe GMeet] Caption container found. Attaching MutationObserver...');
+      appendLiveTranscript('✅ Đã kết nối với phụ đề Google Meet. Đang lắng nghe...');
 
-    // Perform initial scan of existing captions already visible
-    scanExistingCaptions(captionContainer);
+      // Perform initial scan of existing captions already visible
+      scanExistingCaptions(captionContainer);
 
-    // Create MutationObserver to watch for all DOM changes inside the caption container
-    gmeetObserver = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        // Case 1: New speaker blocks added (childList on container)
-        if (mutation.type === 'childList') {
-          mutation.addedNodes.forEach((node) => {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              processCaptionBlock(node);
-            }
-          });
-        }
+      // Create MutationObserver to watch for all DOM changes inside the caption container
+      gmeetObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          // Case 1: New speaker blocks added (childList on container)
+          if (mutation.type === 'childList') {
+            mutation.addedNodes.forEach((node) => {
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                processCaptionBlock(node);
+              }
+            });
+          }
 
-        // Case 2: Text content changed within existing caption elements (characterData)
-        if (mutation.type === 'characterData') {
-          const parentEl = mutation.target.parentElement;
-          if (parentEl) {
-            const speakerBlock = parentEl.closest('.nMcdL');
-            if (speakerBlock) {
-              processCaptionBlock(speakerBlock);
+          // Case 2: Text content changed within existing caption elements (characterData)
+          if (mutation.type === 'characterData') {
+            const parentEl = mutation.target.parentElement;
+            if (parentEl) {
+              const speakerBlock = parentEl.closest('.nMcdL') || parentEl.closest('[data-speaker-id]');
+              if (speakerBlock) {
+                processCaptionBlock(speakerBlock);
+              }
             }
           }
         }
-      }
-    });
+      });
 
-    gmeetObserver.observe(captionContainer, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
+      gmeetObserver.observe(captionContainer, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
 
-    console.log('[Scribe GMeet] MutationObserver active and listening for captions.');
+      console.log('[Scribe GMeet] MutationObserver active and listening for captions.');
+    }, 400);
   }
 
   /**
@@ -744,10 +808,22 @@
    * Scan existing visible caption blocks on initial observer start.
    */
   function scanExistingCaptions(container) {
-    const blocks = container.querySelectorAll('.nMcdL');
-    blocks.forEach((block) => {
-      const textEl = block.querySelector('.ygicle.VbkSUe');
-      const nameEl = block.querySelector('span.NWpY1d');
+    const blocks = container.querySelectorAll('.nMcdL') || container.children;
+    Array.from(blocks).forEach((block) => {
+      if (block.nodeType !== Node.ELEMENT_NODE) return;
+
+      let textEl = block.querySelector('.ygicle.VbkSUe');
+      let nameEl = block.querySelector('span.NWpY1d');
+
+      // Heuristic fallback for rotated/dynamic class names
+      if (!textEl) {
+        const spans = Array.from(block.querySelectorAll('span, div')).filter(el => el.textContent.trim().length > 0);
+        if (spans.length > 0) {
+          nameEl = nameEl || spans[0];
+          textEl = spans[spans.length - 1];
+        }
+      }
+
       if (textEl) {
         const text = textEl.textContent.trim();
         const speaker = nameEl ? nameEl.textContent.trim() : 'Unknown';
@@ -771,8 +847,18 @@
     const block = element.classList?.contains('nMcdL') ? element : element.closest('.nMcdL');
     if (!block) return;
 
-    const textEl = block.querySelector('.ygicle.VbkSUe');
-    const nameEl = block.querySelector('span.NWpY1d');
+    let textEl = block.querySelector('.ygicle.VbkSUe');
+    let nameEl = block.querySelector('span.NWpY1d');
+
+    // Heuristic fallback for rotated/dynamic class names
+    if (!textEl) {
+      const spans = Array.from(block.querySelectorAll('span, div')).filter(el => el.textContent.trim().length > 0);
+      if (spans.length > 0) {
+        nameEl = nameEl || spans[0];
+        textEl = spans[spans.length - 1];
+      }
+    }
+
     if (!textEl) return;
 
     const currentText = textEl.textContent.trim();
@@ -794,8 +880,15 @@
    * Generate a stable unique key for a caption block element.
    */
   function generateBlockKey(block) {
-    const nameEl = block.querySelector('span.NWpY1d');
-    const imgEl = block.querySelector('img.Z6byG');
+    let nameEl = block.querySelector('span.NWpY1d');
+    let imgEl = block.querySelector('img.Z6byG') || block.querySelector('img');
+
+    // Heuristic fallback for rotated/dynamic class names
+    if (!nameEl) {
+      const spans = Array.from(block.querySelectorAll('span, div')).filter(el => el.textContent.trim().length > 0);
+      nameEl = spans[0];
+    }
+
     const speaker = nameEl ? nameEl.textContent.trim() : 'unknown';
     const imgSrc = imgEl ? imgEl.src.slice(-20) : '';
     // Use index among siblings as additional uniqueness
