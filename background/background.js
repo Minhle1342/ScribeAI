@@ -284,7 +284,36 @@ async function getSavedDeepgramApiKey() {
   });
 }
 
+/**
+ * Programmatically verify if the extension has been granted microphone permission.
+ */
+async function verifyMicrophonePermission() {
+  if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+    try {
+      const permStatus = await navigator.permissions.query({ name: 'microphone' });
+      if (permStatus.state === 'granted') {
+        return true;
+      }
+    } catch (e) {
+      console.warn('Background SW permissions query failed:', e);
+    }
+  }
+
+  // Fallback: Check cached value in chrome.storage.local
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['micPermissionGranted'], (data) => {
+      resolve(!!data.micPermissionGranted);
+    });
+  });
+}
+
 async function startMeetingRecording(tabId, wsUrl) {
+  // Verify microphone permission before initializing recording
+  const isMicAllowed = await verifyMicrophonePermission();
+  if (!isMicAllowed) {
+    throw new Error('Microphone permission is not granted. Please open the Scribe AI extension popup and click "Grant Microphone Permission" to authorize microphone access.');
+  }
+
   updateGlobalState('RECORDING');
   startKeepAliveHeartbeat();
 

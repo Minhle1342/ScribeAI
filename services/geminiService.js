@@ -39,7 +39,7 @@ function getSavedApiKey() {
       return;
     }
 
-    // 1. Try to read decrypted key from in-memory session storage first
+    // 1. Try to read from in-memory session storage first
     if (chrome.storage.session) {
       chrome.storage.session.get(['geminiApiKey'], (sessionResult) => {
         if (sessionResult && sessionResult.geminiApiKey) {
@@ -60,13 +60,6 @@ function getSavedApiKey() {
             return;
           }
 
-          // Check if it's an encrypted object
-          if (typeof rawKey === 'object' && rawKey.ciphertext) {
-            reject(new Error('Gemini API key is locked. Please open the extension popup and enter your Master Password to unlock it.'));
-            return;
-          }
-
-          // Plaintext fallback (legacy key format)
           resolve(rawKey);
         });
       });
@@ -80,10 +73,6 @@ function getSavedApiKey() {
         const rawKey = result.geminiApiKey;
         if (!rawKey) {
           reject(new Error('Gemini API key is not configured. Please open the extension popup and input your key.'));
-          return;
-        }
-        if (typeof rawKey === 'object' && rawKey.ciphertext) {
-          reject(new Error('Gemini API key is locked. Please open the extension popup and enter your Master Password to unlock it.'));
           return;
         }
         resolve(rawKey);

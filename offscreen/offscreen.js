@@ -5,6 +5,7 @@
  * over a WebSocket to an external STT server, and stores returns in IndexedDB.
  */
 
+const USE_NATIVE_STT = true; // Feature Toggle: true for Native Web Speech API, false for WebSocket Deepgram
 let mediaRecorder = null;
 let audioStream = null;
 let micStream = null; // Independent microphone stream
@@ -12,6 +13,8 @@ let audioContext = null;
 let webSocket = null;
 let websocketUrl = 'ws://localhost:8080/stt'; // Default fallback, can be loaded from chrome.storage
 let volumeInterval = null;
+let recognition = null;
+let isRecordingActive = false;
 
 // Handle messages from the background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -49,16 +52,23 @@ async function startCapture(streamId, wsUrl, deepgramApiKey) {
   updateUIStatus('Connecting and initializing capture...');
 
   try {
-    // 1. Establish the WebSocket connection using the passed Deepgram Key
-    const keyToUse = deepgramApiKey || '';
+    isRecordingActive = true;
 
-    let finalWsUrl = websocketUrl;
-    if (keyToUse) {
-      const connector = finalWsUrl.includes('?') ? '&' : '?';
-      finalWsUrl = `${finalWsUrl}${connector}deepgramApiKey=${encodeURIComponent(keyToUse)}`;
+    if (!USE_NATIVE_STT) {
+      // 1. Establish the WebSocket connection using the passed Deepgram Key
+      const keyToUse = deepgramApiKey || '';
+
+      let finalWsUrl = websocketUrl;
+      if (keyToUse) {
+        const connector = finalWsUrl.includes('?') ? '&' : '?';
+        finalWsUrl = `${finalWsUrl}${connector}deepgramApiKey=${encodeURIComponent(keyToUse)}`;
+      }
+
+      await initWebSocket(finalWsUrl);
+    } else {
+      // Initialize Native STT (webkitSpeechRecognition)
+      await initNativeSTT();
     }
-
-    await initWebSocket(finalWsUrl);
 
     // 2. Request active tab stream via the sent streamId
     audioStream = await navigator.mediaDevices.getUserMedia({
@@ -111,30 +121,34 @@ async function startCapture(streamId, wsUrl, deepgramApiKey) {
       micSource.connect(analyserNode);
     }
 
-    // 4. Initialize MediaRecorder with the MIXED stream
-    // WebM Opus is the standard, highly efficient compressed audio codec
-    const options = { mimeType: 'audio/webm;codecs=opus' };
-    console.log('[Offscreen Debug] Initializing MediaRecorder with mixed stream options:', options);
-    mediaRecorder = new MediaRecorder(mixedDestination.stream, options);
+    if (!USE_NATIVE_STT) {
+      // 4. Initialize MediaRecorder with the MIXED stream
+      // WebM Opus is the standard, highly efficient compressed audio codec
+      const options = { mimeType: 'audio/webm;codecs=opus' };
+      console.log('[Offscreen Debug] Initializing MediaRecorder with mixed stream options:', options);
+      mediaRecorder = new MediaRecorder(mixedDestination.stream, options);
 
-    mediaRecorder.ondataavailable = async (event) => {
-      if (event.data && event.data.size > 0 && webSocket && webSocket.readyState === WebSocket.OPEN) {
-        // Read file contents as ArrayBuffer
-        const arrayBuffer = await event.data.arrayBuffer();
-        console.log(`[Offscreen Debug] Sending binary audio chunk: ${arrayBuffer.byteLength} bytes to STT server.`);
-        // Send raw binary audio slice over WebSocket
-        webSocket.send(arrayBuffer);
-      }
-    };
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data && event.data.size > 0 && webSocket && webSocket.readyState === WebSocket.OPEN) {
+          // Read file contents as ArrayBuffer
+          const arrayBuffer = await event.data.arrayBuffer();
+          console.log(`[Offscreen Debug] Sending binary audio chunk: ${arrayBuffer.byteLength} bytes to STT server.`);
+          // Send raw binary audio slice over WebSocket
+          webSocket.send(arrayBuffer);
+        }
+      };
 
-    mediaRecorder.onstop = () => {
-      console.log('[Offscreen Debug] MediaRecorder stopped capture successfully.');
-      updateUIStatus('Stopped');
-    };
+      mediaRecorder.onstop = () => {
+        console.log('[Offscreen Debug] MediaRecorder stopped capture successfully.');
+        updateUIStatus('Stopped');
+      };
 
-    // Slice audio every 1000ms and stream chunks
-    mediaRecorder.start(1000);
-    updateUIStatus('Recording & Streaming');
+      // Slice audio every 1000ms and stream chunks
+      mediaRecorder.start(1000);
+      updateUIStatus('Recording & Streaming');
+    } else {
+      updateUIStatus('Recording & Speech API Active');
+    }
 
     // Start volume meter polling
     const bufferLength = analyserNode.frequencyBinCount;
@@ -166,6 +180,106 @@ async function startCapture(streamId, wsUrl, deepgramApiKey) {
     chrome.runtime.sendMessage({ action: 'RECORDING_ERROR', error: error.message });
     throw error;
   }
+}
+
+/**
+ * Initialize Native STT (webkitSpeechRecognition) and hook event handlers.
+ * @returns {Promise<void>}
+ */
+function initNativeSTT() {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log('[Offscreen Debug] Initializing Native Web Speech API...');
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        throw new Error('Web Speech API is not supported in this browser environment.');
+      }
+
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.lang = 'vi-VN';
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        console.log('[Offscreen Debug] Native STT started.');
+        resolve();
+      };
+
+      recognition.onresult = async (event) => {
+        try {
+          const resultIndex = event.resultIndex;
+          const latestResult = event.results[resultIndex];
+          if (latestResult && latestResult.isFinal) {
+            const transcribedText = latestResult[0].transcript.trim();
+            if (transcribedText) {
+              console.log('[Offscreen Debug] Native STT Transcribed Text:', transcribedText);
+
+              // Save to IndexedDB (db.js is preloaded in offscreen.html and exposes window.meetingDB)
+              if (window.meetingDB && window.meetingDB.saveTranscriptChunk) {
+                await window.meetingDB.saveTranscriptChunk(transcribedText);
+              }
+
+              // Notify background worker and injection UIs of the new text segment
+              chrome.runtime.sendMessage({
+                action: 'TRANSCRIPT_APPENDED',
+                text: transcribedText
+              });
+            }
+          }
+        } catch (dbError) {
+          console.error('[Offscreen Debug] Error writing native transcript chunk to IndexedDB:', dbError);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.error('[Offscreen Debug] Native STT Error Event:', event.error);
+        
+        let errorMsg = `Native STT error: ${event.error}`;
+        if (event.error === 'not-allowed') {
+          errorMsg = 'Microphone permission blocked or not granted.';
+        } else if (event.error === 'network') {
+          errorMsg = 'Network connection lost during speech recognition.';
+        }
+
+        chrome.runtime.sendMessage({
+          action: 'RECORDING_ERROR',
+          error: errorMsg
+        });
+
+        // If network error, attempt to restart after 5s backoff
+        if (event.error === 'network' && isRecordingActive) {
+          console.warn('[Offscreen Debug] Network error. Retrying in 5 seconds...');
+          setTimeout(() => {
+            if (isRecordingActive) {
+              try {
+                recognition.start();
+              } catch (e) {
+                console.error('[Offscreen Debug] Failed to restart recognition after network drop:', e);
+              }
+            }
+          }, 5000);
+        }
+      };
+
+      recognition.onend = () => {
+        console.log('[Offscreen Debug] Native STT session ended.');
+        // Auto-restart if recording is active (mitigate 60s silence timeout)
+        if (isRecordingActive) {
+          console.log('[Offscreen Debug] Auto-restarting Native STT session...');
+          try {
+            recognition.start();
+          } catch (e) {
+            console.error('[Offscreen Debug] Failed to auto-restart native recognition:', e);
+          }
+        }
+      };
+
+      recognition.start();
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 /**
@@ -247,6 +361,7 @@ function initWebSocket(url) {
  * Stop capturing audio, close connection, clean up hardware resources.
  */
 function stopCapture() {
+  isRecordingActive = false;
   cleanupStreams();
   updateUIStatus('Stopped');
   chrome.runtime.sendMessage({ action: 'RECORDING_STATE_CHANGE', state: 'IDLE' });
@@ -259,6 +374,15 @@ function cleanupStreams() {
   if (volumeInterval) {
     clearInterval(volumeInterval);
     volumeInterval = null;
+  }
+
+  if (recognition) {
+    try {
+      recognition.abort();
+    } catch (e) {
+      console.warn('[Offscreen Debug] Failed to abort recognition:', e);
+    }
+    recognition = null;
   }
 
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {

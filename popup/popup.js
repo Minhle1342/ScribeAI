@@ -4,11 +4,6 @@
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  const masterPasswordInput = document.getElementById('master-password');
-  const lockStatusSpan = document.getElementById('lock-status');
-  const toggleMasterBtn = document.getElementById('toggle-master-visibility');
-  const unlockBtn = document.getElementById('btn-unlock');
-  
   // Explicitly declare other DOM elements to prevent implicit global resolution issues
   const apiKeyInput = document.getElementById('api-key');
   const deepgramKeyInput = document.getElementById('deepgram-key');
@@ -34,31 +29,98 @@ document.addEventListener('DOMContentLoaded', () => {
   const chatInput = document.getElementById('chat-input');
   const btnSendChat = document.getElementById('btn-send-chat');
 
-  let isKeysLocked = false;
-  let cachedEncryptedKeys = null;
+  // Microphone Permission UI Elements
+  const micPermissionCard = document.getElementById('mic-permission-card');
+  const btnGrantMic = document.getElementById('btn-grant-mic');
+  const micPermissionTitle = document.getElementById('mic-permission-title');
+  const micPermissionDesc = document.getElementById('mic-permission-desc');
 
-  // Toggle master password visibility mask
-  toggleMasterBtn.addEventListener('click', () => {
-    if (masterPasswordInput.type === 'password') {
-      masterPasswordInput.type = 'text';
-      toggleMasterBtn.textContent = '🙈';
-    } else {
-      masterPasswordInput.type = 'password';
-      toggleMasterBtn.textContent = '👁️';
+  async function checkMicrophonePermission() {
+    if (!navigator.permissions || !navigator.permissions.query) {
+      // Fallback if query API is not supported in this context
+      if (micPermissionCard) micPermissionCard.classList.add('hidden');
+      return;
     }
-  });
 
-  // Request microphone permission on load to ensure offscreen document capture works
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then((stream) => {
-        stream.getTracks().forEach(track => track.stop());
-        console.log('Microphone permission pre-granted successfully.');
-      })
-      .catch((err) => {
-        console.warn('Microphone permission pre-grant declined or failed:', err);
-      });
+    try {
+      const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
+      console.log('Microphone permission state:', permissionStatus.state);
+      handlePermissionState(permissionStatus.state);
+
+      // Bind dynamic listener for permission status updates
+      permissionStatus.onchange = () => {
+        handlePermissionState(permissionStatus.state);
+      };
+    } catch (err) {
+      console.warn('Permissions query failed:', err);
+      if (micPermissionCard) micPermissionCard.classList.add('hidden');
+    }
   }
+
+  function handlePermissionState(state) {
+    if (state === 'granted') {
+      if (micPermissionCard) micPermissionCard.classList.add('hidden');
+      chrome.storage.local.set({ micPermissionGranted: true });
+    } else if (state === 'denied') {
+      if (micPermissionCard) {
+        micPermissionCard.classList.remove('hidden');
+        micPermissionTitle.textContent = 'Microphone Access Blocked';
+        micPermissionTitle.style.color = '#ef4444';
+        micPermissionCard.style.background = 'rgba(239, 68, 68, 0.1)';
+        micPermissionCard.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+        micPermissionDesc.innerHTML = 'Microphone access is blocked by your browser settings. Please click the site settings icon in the address bar and select "Allow" for microphone access.';
+        btnGrantMic.style.display = 'none';
+      }
+      chrome.storage.local.set({ micPermissionGranted: false });
+    } else {
+      // state === 'prompt'
+      if (micPermissionCard) {
+        micPermissionCard.classList.remove('hidden');
+        micPermissionTitle.textContent = 'Microphone Permission Required';
+        micPermissionTitle.style.color = '#f59e0b';
+        micPermissionCard.style.background = 'rgba(245, 158, 11, 0.1)';
+        micPermissionCard.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+        micPermissionDesc.textContent = 'Scribe AI needs microphone access to record meeting audio. Please grant permission before recording.';
+        btnGrantMic.style.display = 'inline-block';
+      }
+      chrome.storage.local.set({ micPermissionGranted: false });
+    }
+  }
+
+  if (btnGrantMic) {
+    btnGrantMic.addEventListener('click', async () => {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach(track => track.stop());
+          console.log('Microphone permission granted successfully.');
+          handlePermissionState('granted');
+          showToast('Microphone permission granted!');
+        } catch (err) {
+          console.warn('Microphone permission request rejected:', err);
+          if (err.name === 'NotAllowedError') {
+            handlePermissionState('denied');
+            showToast('Microphone permission blocked.', true);
+          } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            if (micPermissionDesc) {
+              micPermissionDesc.textContent = 'No audio input devices found. Please check your physical connection.';
+            }
+            showToast('No microphone found.', true);
+          } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+            if (micPermissionDesc) {
+              micPermissionDesc.textContent = 'Microphone is already in use by another application or OS.';
+            }
+            showToast('Microphone hardware error or conflict.', true);
+          } else {
+            showToast('Permission request failed: ' + err.message, true);
+          }
+        }
+      }
+    });
+  }
+
+  // Trigger permission check on load
+  checkMicrophonePermission();
 
   // Load current configuration and state
   chrome.storage.local.get(['geminiApiKey', 'geminiModel', 'deepgramApiKey', 'websocketUrl', 'uiLanguage', 'recordingState', 'recordingError'], (data) => {
@@ -80,73 +142,15 @@ document.addEventListener('DOMContentLoaded', () => {
     
     updateStateUI(data.recordingState || 'IDLE', data.recordingError);
 
-    // Secure BYOK Check
-    const hasGemini = !!data.geminiApiKey;
-    const hasDeepgram = !!data.deepgramApiKey;
-
-    if (hasGemini && typeof data.geminiApiKey === 'object' && data.geminiApiKey.ciphertext) {
-      // 🔒 Locked by default
-      isKeysLocked = true;
-      cachedEncryptedKeys = {
-        geminiApiKey: data.geminiApiKey,
-        deepgramApiKey: (hasDeepgram && typeof data.deepgramApiKey === 'object') ? data.deepgramApiKey : null
-      };
-
-      // Check if already unlocked in this session
-      if (chrome.storage.session) {
-        chrome.storage.session.get(['geminiApiKey', 'deepgramApiKey'], (sessionResult) => {
-          if (sessionResult && sessionResult.geminiApiKey) {
-            // Already unlocked!
-            isKeysLocked = false;
-            apiKeyInput.value = sessionResult.geminiApiKey;
-            deepgramKeyInput.value = sessionResult.deepgramApiKey || '';
-            apiKeyInput.disabled = false;
-            deepgramKeyInput.disabled = false;
-            
-            lockStatusSpan.textContent = '🔓 Unlocked (Session)';
-            lockStatusSpan.style.background = '#e2fbe8';
-            lockStatusSpan.style.color = '#15803d';
-            unlockBtn.style.display = 'none';
-          } else {
-            // Truly locked
-            apiKeyInput.value = '••••••••••••••••••••••••••••••••';
-            deepgramKeyInput.value = hasDeepgram ? '••••••••••••••••••••••••••••••••' : '';
-            apiKeyInput.disabled = true;
-            deepgramKeyInput.disabled = true;
-
-            lockStatusSpan.textContent = '🔒 Locked';
-            lockStatusSpan.style.background = '#fee2e2';
-            lockStatusSpan.style.color = '#991b1b';
-            unlockBtn.style.display = 'inline-block';
-          }
-          refreshChatTabUI();
-        });
-      } else {
-        // Fallback if session storage not supported/initialized yet
-        refreshChatTabUI();
-      }
-    } else {
-      // Plaintext or fresh installation
-      isKeysLocked = false;
-      if (data.geminiApiKey) {
-        apiKeyInput.value = data.geminiApiKey;
-      }
-      if (data.deepgramApiKey) {
-        deepgramKeyInput.value = data.deepgramApiKey;
-      }
-      
-      if (hasGemini) {
-        lockStatusSpan.textContent = '🔓 Plaintext (Warning)';
-        lockStatusSpan.style.background = '#fef3c7';
-        lockStatusSpan.style.color = '#b45309';
-      } else {
-        lockStatusSpan.textContent = '🔓 Unlocked';
-        lockStatusSpan.style.background = '#e0f2fe';
-        lockStatusSpan.style.color = '#0369a1';
-      }
-      unlockBtn.style.display = 'none';
-      refreshChatTabUI();
+    // Load plaintext keys directly
+    if (data.geminiApiKey) {
+      apiKeyInput.value = data.geminiApiKey;
     }
+    if (data.deepgramApiKey) {
+      deepgramKeyInput.value = data.deepgramApiKey;
+    }
+    
+    refreshChatTabUI();
   });
 
   // Periodically poll or listen for state changes to keep popup reactive
@@ -178,75 +182,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Unlock button click handler
-  unlockBtn.addEventListener('click', async () => {
-    const password = masterPasswordInput.value;
-    if (!password) {
-      showToast('Error: Please enter your Master Password to unlock.', true);
-      return;
-    }
-
-    if (!cachedEncryptedKeys || !cachedEncryptedKeys.geminiApiKey) {
-      showToast('Error: No encrypted keys to unlock.', true);
-      return;
-    }
-
-    try {
-      showToast('Decrypting...');
-      const decryptedGemini = await decryptText(cachedEncryptedKeys.geminiApiKey, password);
-      
-      let decryptedDeepgram = '';
-      if (cachedEncryptedKeys.deepgramApiKey) {
-        decryptedDeepgram = await decryptText(cachedEncryptedKeys.deepgramApiKey, password);
-      }
-
-      // If we got here, decryption succeeded!
-      if (chrome.storage.session) {
-        if (chrome.storage.session.setAccessLevel) {
-          await chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }).catch(() => {});
-        }
-        await new Promise((resolve) => {
-          chrome.storage.session.set({
-            geminiApiKey: decryptedGemini,
-            deepgramApiKey: decryptedDeepgram
-          }, resolve);
-        });
-      }
-
-      isKeysLocked = false;
-      apiKeyInput.value = decryptedGemini;
-      deepgramKeyInput.value = decryptedDeepgram;
-      apiKeyInput.disabled = false;
-      deepgramKeyInput.disabled = false;
-
-      lockStatusSpan.textContent = '🔓 Unlocked';
-      lockStatusSpan.style.background = '#e2fbe8';
-      lockStatusSpan.style.color = '#15803d';
-      unlockBtn.style.display = 'none';
-
-      refreshChatTabUI();
-      showToast('Keys unlocked successfully!');
-    } catch (err) {
-      console.error('Decryption failed:', err);
-      showToast('Error: Invalid Master Password.', true);
-    }
-  });
-
   // Save Settings handler
   saveBtn.addEventListener('click', async () => {
     const rawApiKey = apiKeyInput.value.trim();
     const rawDeepgramKey = deepgramKeyInput.value.trim();
     const rawWsUrl = wsUrlInput.value.trim();
-    const masterPassword = masterPasswordInput.value;
-
     const selectedModel = modelSelect.value;
 
     // 1. Strict Validation
-    if (isKeysLocked) {
-      showToast('Error: Keys are locked. Unlock them with Master Password first.', true);
-      return;
-    }
-
     if (!rawApiKey) {
       showToast('Error: Gemini API Key is required.', true);
       return;
@@ -267,28 +210,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
-      let finalGeminiKey = rawApiKey;
-      let finalDeepgramKey = rawDeepgramKey;
-
-      if (masterPassword) {
-        showToast('Encrypting...');
-        finalGeminiKey = await encryptText(rawApiKey, masterPassword);
-        if (rawDeepgramKey) {
-          finalDeepgramKey = await encryptText(rawDeepgramKey, masterPassword);
-        }
-      } else {
-        if (cachedEncryptedKeys && cachedEncryptedKeys.geminiApiKey) {
-          if (!confirm('You previously had encrypted keys. Saving without a Master Password will store your keys in plain-text. Continue?')) {
-            return;
-          }
-        }
-      }
-
       // 2. Persist to Chrome Local Storage
       chrome.storage.local.set({
-        geminiApiKey: finalGeminiKey,
+        geminiApiKey: rawApiKey,
         geminiModel: selectedModel,
-        deepgramApiKey: finalDeepgramKey,
+        deepgramApiKey: rawDeepgramKey,
         websocketUrl: rawWsUrl,
         uiLanguage: uiLanguageSelect.value
       }, async () => {
@@ -303,30 +229,13 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         }
 
-        // Update local cached keys structure
-        if (masterPassword) {
-          cachedEncryptedKeys = {
-            geminiApiKey: finalGeminiKey,
-            deepgramApiKey: rawDeepgramKey ? finalDeepgramKey : null
-          };
-          lockStatusSpan.textContent = '🔓 Unlocked (Encrypted)';
-          lockStatusSpan.style.background = '#e2fbe8';
-          lockStatusSpan.style.color = '#15803d';
-        } else {
-          cachedEncryptedKeys = null;
-          lockStatusSpan.textContent = '🔓 Plaintext (Warning)';
-          lockStatusSpan.style.background = '#fef3c7';
-          lockStatusSpan.style.color = '#b45309';
-        }
-
-        isKeysLocked = false;
         refreshChatTabUI();
         showToast('Settings saved successfully!');
         console.log('Saved configuration.');
       });
     } catch (err) {
-      console.error('Encryption failed:', err);
-      showToast('Error encrypting keys: ' + err.message, true);
+      console.error('Save failed:', err);
+      showToast('Error saving settings: ' + err.message, true);
     }
   });
 
@@ -411,13 +320,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Refresh Chat view based on keys locked/unlocked state
   function refreshChatTabUI() {
-    if (isKeysLocked) {
-      chatLockedWarning.classList.remove('hidden');
-      chatActiveContainer.classList.add('hidden');
-    } else {
+    if (chatLockedWarning) {
       chatLockedWarning.classList.add('hidden');
-      chatActiveContainer.classList.remove('hidden');
     }
+    chatActiveContainer.classList.remove('hidden');
   }
 
   // Chat message send handlers
