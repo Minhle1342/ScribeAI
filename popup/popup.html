@@ -46,6 +46,7 @@
       <div class="tabs-navigation">
         <button type="button" id="tab-btn-config" class="tab-btn active">Settings</button>
         <button type="button" id="tab-btn-chat" class="tab-btn">Ask AI</button>
+        <button type="button" id="tab-btn-sop" class="tab-btn">SOP Docs</button>
       </div>
 
       <!-- TAB CONTENT: Settings / Configuration -->
@@ -134,6 +135,32 @@
             <input type="text" id="chat-input" placeholder="Ask about meeting details..." style="flex: 1; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); border-radius: 10px; padding: 8px 12px; font-size: 12px; color: var(--text-primary); outline: none;" />
             <button type="button" id="btn-send-chat" class="btn btn-primary" style="width: auto; padding: 0 16px; border-radius: 10px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 12px;">Send</button>
           </div>
+        </div>
+      </div>
+
+      <!-- TAB CONTENT: Knowledge Base (SOP) -->
+      <div id="sop-tab-content" class="tab-content hidden">
+        <section class="section">
+          <h2>Knowledge Base (SOP)</h2>
+          
+          <!-- SOP Raw Text Input -->
+          <div class="input-group">
+            <label for="sop-raw-text">Paste SOP / Document Text</label>
+            <textarea id="sop-raw-text" placeholder="Paste your raw SOP content or system instructions here..." rows="6" style="width: 100%; min-height: 100px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); border-radius: 10px; padding: 10px; font-size: 12px; color: var(--text-primary); font-family: inherit; resize: vertical; box-sizing: border-box; outline: none;"></textarea>
+            <span class="help-text">Input text will be ingested to form the meeting contextual guide.</span>
+          </div>
+
+          <!-- File Upload Input -->
+          <div class="input-group">
+            <label for="sop-file-upload">Or Upload Document File</label>
+            <input type="file" id="sop-file-upload" accept=".txt, .md, .csv" style="width: 100%; font-size: 12px; color: var(--text-secondary);" />
+            <span class="help-text">Supported formats: .txt, .md, .csv</span>
+          </div>
+        </section>
+
+        <!-- Save Button Footer -->
+        <div class="actions" style="margin-top: 15px;">
+          <button id="save-sop" class="btn btn-primary" style="width: 100%;">Save to Knowledge Base</button>
         </div>
       </div>
 

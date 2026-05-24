@@ -304,6 +304,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true; // Keep response channel open async
   }
+
+  // 10. Get SOP-based Suggestion for a Difficulty (Micro-MRP)
+  if (message.action === 'GET_SOP_SUGGESTION') {
+    (async () => {
+      try {
+        const apiKey = await self.geminiService.getSavedApiKey();
+        const localData = await new Promise(resolve => chrome.storage.local.get(['sopRawText', 'uiLanguage'], resolve));
+        const sopText = localData.sopRawText || '';
+        const uiLanguage = localData.uiLanguage || 'vi';
+
+        const result = await self.geminiService.solveDifficultyWithSop(
+          apiKey,
+          message.difficultyText,
+          sopText,
+          uiLanguage
+        );
+        sendResponse({ success: true, result });
+      } catch (err) {
+        console.error('SOP Suggestion execution failed:', err);
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true; // Keep response channel open async
+  }
 });
 
 /**

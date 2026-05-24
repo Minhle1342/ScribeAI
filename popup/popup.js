@@ -18,16 +18,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusDetail = document.getElementById('status-detail');
   const toast = document.getElementById('toast');
 
-  // Chat tab UI elements
+  // Chat & SOP tab UI elements
   const tabBtnConfig = document.getElementById('tab-btn-config');
   const tabBtnChat = document.getElementById('tab-btn-chat');
+  const tabBtnSop = document.getElementById('tab-btn-sop');
   const configTabContent = document.getElementById('config-tab-content');
   const chatTabContent = document.getElementById('chat-tab-content');
+  const sopTabContent = document.getElementById('sop-tab-content');
   const chatLockedWarning = document.getElementById('chat-locked-warning');
   const chatActiveContainer = document.getElementById('chat-active-container');
   const chatHistory = document.getElementById('chat-history');
   const chatInput = document.getElementById('chat-input');
   const btnSendChat = document.getElementById('btn-send-chat');
+  const sopRawText = document.getElementById('sop-raw-text');
+  const sopFileUpload = document.getElementById('sop-file-upload');
+  const saveSopBtn = document.getElementById('save-sop');
 
   // Microphone Permission UI Elements
   const micPermissionCard = document.getElementById('mic-permission-card');
@@ -123,7 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkMicrophonePermission();
 
   // Load current configuration and state
-  chrome.storage.local.get(['geminiApiKey', 'geminiModel', 'deepgramApiKey', 'websocketUrl', 'uiLanguage', 'recordingState', 'recordingError'], (data) => {
+  chrome.storage.local.get(['geminiApiKey', 'geminiModel', 'deepgramApiKey', 'websocketUrl', 'uiLanguage', 'recordingState', 'recordingError', 'sopRawText'], (data) => {
     if (data.geminiModel) {
       modelSelect.value = data.geminiModel;
     } else {
@@ -148,6 +153,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (data.deepgramApiKey) {
       deepgramKeyInput.value = data.deepgramApiKey;
+    }
+    if (data.sopRawText && sopRawText) {
+      sopRawText.value = data.sopRawText;
     }
     
     refreshChatTabUI();
@@ -306,17 +314,61 @@ document.addEventListener('DOMContentLoaded', () => {
   tabBtnConfig.addEventListener('click', () => {
     tabBtnConfig.classList.add('active');
     tabBtnChat.classList.remove('active');
+    if (tabBtnSop) tabBtnSop.classList.remove('active');
     configTabContent.classList.remove('hidden');
     chatTabContent.classList.add('hidden');
+    if (sopTabContent) sopTabContent.classList.add('hidden');
   });
 
   tabBtnChat.addEventListener('click', () => {
     tabBtnChat.classList.add('active');
     tabBtnConfig.classList.remove('active');
+    if (tabBtnSop) tabBtnSop.classList.remove('active');
     chatTabContent.classList.remove('hidden');
     configTabContent.classList.add('hidden');
+    if (sopTabContent) sopTabContent.classList.add('hidden');
     refreshChatTabUI();
   });
+
+  if (tabBtnSop) {
+    tabBtnSop.addEventListener('click', () => {
+      tabBtnSop.classList.add('active');
+      tabBtnConfig.classList.remove('active');
+      tabBtnChat.classList.remove('active');
+      if (sopTabContent) sopTabContent.classList.remove('hidden');
+      configTabContent.classList.add('hidden');
+      chatTabContent.classList.add('hidden');
+    });
+  }
+
+  // SOP Save Action
+  if (saveSopBtn) {
+    saveSopBtn.addEventListener('click', () => {
+      const text = sopRawText.value.trim();
+      const file = sopFileUpload.files[0];
+
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const fileText = e.target.result;
+          chrome.storage.local.set({ sopRawText: fileText }, () => {
+            if (sopRawText) sopRawText.value = fileText;
+            showToast('Document uploaded and saved successfully!');
+            console.log('Saved uploaded document as raw SOP text.');
+          });
+        };
+        reader.onerror = () => {
+          showToast('Error reading uploaded file.', true);
+        };
+        reader.readAsText(file);
+      } else {
+        chrome.storage.local.set({ sopRawText: text }, () => {
+          showToast('SOP text saved successfully!');
+          console.log('Saved raw SOP text configuration.');
+        });
+      }
+    });
+  }
 
   // Refresh Chat view based on keys locked/unlocked state
   function refreshChatTabUI() {

@@ -630,6 +630,11 @@
         topicsTitle: '📌 Các Chủ đề Chính',
         decisionsTitle: '🎯 Các Quyết định',
         actionsTitle: '🚀 Công việc (Tasks)',
+        difficultiesTitle: '⚠️ Khó khăn & Vấn đề Quy trình',
+        noDifficulties: 'Không ghi nhận khó khăn hoặc sự cố nào phát sinh.',
+        aiSuggestBtn: '🤖 Gợi ý AI',
+        thinking: 'Đang xử lý...',
+        citationTitle: 'Trích dẫn quy trình SOP:',
         exportExcel: '📥 Xuất Excel',
         exportTitle: 'Xuất danh sách sang Microsoft Excel',
         noExportData: 'Không có công việc nào để xuất!'
@@ -643,6 +648,11 @@
         topicsTitle: '📌 Key Topics Discussed',
         decisionsTitle: '🎯 Agreements & Decisions',
         actionsTitle: '🚀 Tasks & Action Items',
+        difficultiesTitle: '⚠️ Process Bottlenecks & Difficulties',
+        noDifficulties: 'No process difficulties or incidents were reported.',
+        aiSuggestBtn: '🤖 AI Suggestion',
+        thinking: 'Thinking...',
+        citationTitle: 'SOP Citation:',
         exportExcel: '📥 Export Excel',
         exportTitle: 'Export list to Microsoft Excel',
         noExportData: 'No action items to export!'
@@ -706,6 +716,40 @@
       actionsHtml = `<div class="scribe-transcript-empty">${t.noActions}</div>`;
     }
 
+    // 4. Build Difficulties Section (Micro-MRP)
+    let difficultiesHtml = '';
+    if (data.difficulties && data.difficulties.length > 0) {
+      data.difficulties.forEach((diff) => {
+        const raisedBy = diff.raisedBy || t.unassigned;
+        difficultiesHtml += `
+          <div class="scribe-difficulty-card" id="difficulty-card-${diff.id}" style="margin-bottom: 12px; padding: 12px; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.15); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+              <div style="flex: 1; min-width: 0;">
+                <h4 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 600; color: #fca5a5; word-break: break-word;">${escapeHtml(diff.title)}</h4>
+                <p style="margin: 0 0 8px 0; font-size: 12px; color: #e8eaed; line-height: 1.4; word-break: break-word;">${escapeHtml(diff.description)}</p>
+                <div style="font-size: 11px; color: #9aa0a6;">
+                  <span>Nguồn: </span><span class="scribe-pill" style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); font-size: 10px; padding: 1px 6px; border-radius: 4px; color: #e8eaed; display: inline-block; vertical-align: middle;">${escapeHtml(raisedBy)}</span>
+                </div>
+              </div>
+              <button class="scribe-btn-ai-suggest" data-diff-id="${diff.id}" data-diff-text="${escapeHtml(diff.description)}" style="background: linear-gradient(135deg, #a855f7 0%, #3b82f6 100%); border: none; border-radius: 6px; color: white; padding: 6px 12px; cursor: pointer; font-size: 11px; font-weight: 500; display: flex; align-items: center; gap: 4px; transition: transform 0.2s, box-shadow 0.2s; white-space: nowrap; flex-shrink: 0;">
+                ${t.aiSuggestBtn}
+              </button>
+            </div>
+            <!-- AI grounded suggestion result container -->
+            <div class="scribe-ai-suggestion-container hidden" style="margin-top: 12px; padding: 10px; background: rgba(168, 85, 247, 0.08); border-left: 3px solid #a855f7; border-radius: 4px; font-size: 12px; line-height: 1.5; color: #e8eaed;">
+              <div class="scribe-ai-suggestion-text" style="word-break: break-word;"></div>
+              <div class="scribe-ai-suggestion-citation hidden" style="margin-top: 8px; font-size: 11px; font-style: italic; color: #a7f3d0; background: rgba(52, 211, 153, 0.1); padding: 6px; border-radius: 4px; border: 1px dashed rgba(52, 211, 153, 0.3); word-break: break-word;">
+                <strong style="color: #34d399; font-style: normal; display: block; margin-bottom: 2px;">${t.citationTitle}</strong>
+                <span class="scribe-ai-citation-content"></span>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+    } else {
+      difficultiesHtml = `<div class="scribe-transcript-empty">${t.noDifficulties}</div>`;
+    }
+
     // Compile into dashboard bento layout
     summaryView.innerHTML = `
       <div class="scribe-summary-wrapper">
@@ -719,6 +763,12 @@
         <section class="scribe-summary-section">
           <h3 class="scribe-section-title">${t.decisionsTitle}</h3>
           ${decisionsHtml}
+        </section>
+
+        <!-- Difficulties Section -->
+        <section class="scribe-summary-section">
+          <h3 class="scribe-section-title">${t.difficultiesTitle}</h3>
+          ${difficultiesHtml}
         </section>
 
         <!-- Action Items Section -->
@@ -780,6 +830,74 @@
         URL.revokeObjectURL(url);
       });
     }
+
+    // Bind AI Suggestion click listeners for Difficulties
+    const suggestButtons = summaryView.querySelectorAll('.scribe-btn-ai-suggest');
+    suggestButtons.forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+
+        const diffId = btn.getAttribute('data-diff-id');
+        const diffText = btn.getAttribute('data-diff-text');
+
+        // Find container and text elements inside this card
+        const card = document.getElementById(`difficulty-card-${diffId}`);
+        if (!card) return;
+
+        const container = card.querySelector('.scribe-ai-suggestion-container');
+        const suggestionTextEl = card.querySelector('.scribe-ai-suggestion-text');
+        const citationEl = card.querySelector('.scribe-ai-suggestion-citation');
+        const citationContentEl = card.querySelector('.scribe-ai-citation-content');
+
+        if (!container || !suggestionTextEl) return;
+
+        // Show container and loading state
+        container.classList.remove('hidden');
+        citationEl.classList.add('hidden');
+        suggestionTextEl.innerHTML = `<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="scribe-spinner" style="width: 14px; height: 14px; border-width: 1.5px; border-top-color: #a855f7;"></span>${t.thinking}</span>`;
+
+        // Disable button to prevent concurrent duplicate calls
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+        btn.style.cursor = 'not-allowed';
+
+        if (!checkContextValidity()) {
+          suggestionTextEl.innerHTML = `<span style="color: #fca5a5;">⚠️ Context invalidated. Reload needed.</span>`;
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          btn.style.cursor = 'pointer';
+          return;
+        }
+
+        chrome.runtime.sendMessage({
+          action: 'GET_SOP_SUGGESTION',
+          difficultyText: diffText
+        }, (response) => {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          btn.style.cursor = 'pointer';
+
+          if (!response || !response.success) {
+            suggestionTextEl.innerHTML = `<span style="color: #fca5a5;">⚠️ Lỗi: ${escapeHtml(response?.error || 'Unknown error')}</span>`;
+            return;
+          }
+
+          const result = response.result;
+          if (result.status === 'not_found' || result.solution.includes('Not found in provided SOP documents.')) {
+            suggestionTextEl.innerHTML = `<span style="color: #9aa0a6; font-style: italic;">Not found in provided SOP documents.</span>`;
+            citationEl.classList.add('hidden');
+          } else {
+            suggestionTextEl.textContent = result.solution;
+            if (result.citation) {
+              citationContentEl.textContent = result.citation;
+              citationEl.classList.remove('hidden');
+            } else {
+              citationEl.classList.add('hidden');
+            }
+          }
+        });
+      });
+    });
   }
   /**
    * ═══════════════════════════════════════════════════════════════════
