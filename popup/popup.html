@@ -28,62 +28,124 @@
         <div class="status-detail" id="status-detail">Ready to capture meeting audio.</div>
       </div>
 
-      <!-- Settings Section -->
-      <section class="section">
-        <h2>Configuration</h2>
-        
-        <!-- Gemini Key Card -->
-        <div class="input-group">
-          <label for="api-key">Gemini API Key (BYOK)</label>
-          <div class="password-wrapper">
-            <input type="password" id="api-key" placeholder="Enter your Gemini API key" autocomplete="off" />
-            <button type="button" id="toggle-key-visibility" class="btn-icon" title="Toggle visibility">👁️</button>
+      <!-- Tabs Navigation -->
+      <div class="tabs-navigation">
+        <button type="button" id="tab-btn-config" class="tab-btn active">Settings</button>
+        <button type="button" id="tab-btn-chat" class="tab-btn">Ask AI</button>
+      </div>
+
+      <!-- TAB CONTENT: Settings / Configuration -->
+      <div id="config-tab-content" class="tab-content">
+        <!-- Settings Section -->
+        <section class="section">
+          <h2>Configuration</h2>
+          
+          <!-- Master Password Card -->
+          <div class="input-group">
+            <label for="master-password" style="display: flex; justify-content: space-between; align-items: center;">
+              <span>Master Password (Security)</span>
+              <span id="lock-status" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: bold; background: #fee2e2; color: #991b1b;">🔒 Locked</span>
+            </label>
+            <div class="password-wrapper" style="display: flex; gap: 8px;">
+              <input type="password" id="master-password" placeholder="Enter Master Password to encrypt/unlock" autocomplete="off" style="flex: 1;" />
+              <button type="button" id="toggle-master-visibility" class="btn-icon" title="Toggle visibility" style="min-width: 40px; border: 1px solid #d1d5db; background: white; border-radius: 6px; cursor: pointer;">👁️</button>
+              <button type="button" id="btn-unlock" class="btn" style="padding: 0 12px; font-size: 13px; height: 38px; border: 1px solid #d1d5db; background: #f3f4f6; border-radius: 6px; cursor: pointer;">Unlock</button>
+            </div>
+            <span class="help-text">Used to encrypt your Gemini and Deepgram API keys on disk.</span>
           </div>
-          <span class="help-text">Your key is stored securely in your local browser instance.</span>
-        </div>
 
-        <!-- Deepgram Key Card -->
-        <div class="input-group">
-          <label for="deepgram-key">Deepgram API Key (STT)</label>
-          <div class="password-wrapper">
-            <input type="password" id="deepgram-key" placeholder="Enter Deepgram key (Optional for live STT)" autocomplete="off" />
-            <button type="button" id="toggle-deepgram-visibility" class="btn-icon" title="Toggle visibility">👁️</button>
+          <!-- Gemini Key Card -->
+          <div class="input-group">
+            <label for="api-key">Gemini API Key (BYOK)</label>
+            <div class="password-wrapper">
+              <input type="password" id="api-key" placeholder="Enter your Gemini API key" autocomplete="off" />
+              <button type="button" id="toggle-key-visibility" class="btn-icon" title="Toggle visibility">👁️</button>
+            </div>
+            <span class="help-text">Your key is stored securely in your local browser instance.</span>
           </div>
-          <span class="help-text">Optional. If empty, server defaults to Mock Mode.</span>
+
+          <!-- Deepgram Key Card -->
+          <div class="input-group">
+            <label for="deepgram-key">Deepgram API Key (STT)</label>
+            <div class="password-wrapper">
+              <input type="password" id="deepgram-key" placeholder="Enter Deepgram key (Optional for live STT)" autocomplete="off" />
+              <button type="button" id="toggle-deepgram-visibility" class="btn-icon" title="Toggle visibility">👁️</button>
+            </div>
+            <span class="help-text">Optional. If empty, server defaults to Mock Mode.</span>
+          </div>
+
+          <!-- Gemini Model Card -->
+          <div class="input-group">
+            <label for="gemini-model">Gemini Model</label>
+            <select id="gemini-model">
+              <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview (Default / Free)</option>
+              <option value="gemini-2.5-flash">gemini-2.5-flash (Fast / Free)</option>
+              <option value="gemini-2.5-pro">gemini-2.5-pro (High Intel / Free)</option>
+              <option value="gemini-2.0-flash">gemini-2.0-flash (Recommended / Free)</option>
+              <option value="gemini-2.0-flash-lite-preview-02-05">gemini-2.0-flash-lite-preview (Ultra-fast / Free)</option>
+              <option value="gemini-1.5-flash">gemini-1.5-flash (Legacy Flash / Free)</option>
+              <option value="gemini-1.5-pro">gemini-1.5-pro (Legacy Pro / Free)</option>
+            </select>
+            <span class="help-text">Select your preferred model. Default is gemini-3.1-flash-lite-preview.</span>
+          </div>
+
+          <!-- WebSocket Card -->
+          <div class="input-group">
+            <label for="ws-url">STT WebSocket Server</label>
+            <input type="text" id="ws-url" placeholder="ws://localhost:8080/stt" />
+            <span class="help-text">Streaming endpoint for transcribing meeting audio chunks.</span>
+          </div>
+          <!-- Language Selection -->
+          <div class="input-group">
+            <label for="ui-language">Output Language</label>
+            <select id="ui-language">
+              <option value="vi">Tiếng Việt (Vietnamese)</option>
+              <option value="en">English</option>
+            </select>
+            <span class="help-text">Select the language for the AI output summary.</span>
+          </div>
+        </section>
+
+        <!-- Action Footer -->
+        <div class="actions">
+          <button id="save-settings" class="btn btn-primary">Save Settings</button>
+          <button id="reset-session" class="btn btn-secondary">Reset Active Session</button>
+        </div>
+      </div>
+
+      <!-- TAB CONTENT: Chat with Meeting -->
+      <div id="chat-tab-content" class="tab-content hidden">
+        <!-- Locked warning if API key is not unlocked -->
+        <div id="chat-locked-warning" class="card" style="background: rgba(239, 68, 68, 0.05); border-color: rgba(239, 68, 68, 0.15); display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 20px 16px;">
+          <span style="font-size: 32px;">🔒</span>
+          <h3 style="font-size: 14px; font-weight: 600; color: #fca5a5;">API Keys Locked</h3>
+          <p style="font-size: 12px; color: var(--text-secondary);">Please unlock Scribe AI with your Master Password in the Settings tab to start chatting with your meeting.</p>
         </div>
 
-        <!-- Gemini Model Card -->
-        <div class="input-group">
-          <label for="gemini-model">Gemini Model</label>
-          <select id="gemini-model">
-            <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview (Default / Free)</option>
-            <option value="gemini-2.5-flash">gemini-2.5-flash (Fast / Free)</option>
-            <option value="gemini-2.5-pro">gemini-2.5-pro (High Intel / Free)</option>
-            <option value="gemini-2.0-flash">gemini-2.0-flash (Recommended / Free)</option>
-            <option value="gemini-2.0-flash-lite-preview-02-05">gemini-2.0-flash-lite-preview (Ultra-fast / Free)</option>
-            <option value="gemini-1.5-flash">gemini-1.5-flash (Legacy Flash / Free)</option>
-            <option value="gemini-1.5-pro">gemini-1.5-pro (Legacy Pro / Free)</option>
-          </select>
-          <span class="help-text">Select your preferred model. Default is gemini-3.1-flash-lite-preview.</span>
-        </div>
+        <!-- Chat container visible when unlocked -->
+        <div id="chat-active-container" class="hidden">
+          <!-- Scrollable Chat History -->
+          <div id="chat-history" class="chat-history-container">
+            <!-- Welcome message -->
+            <div class="chat-bubble system-bubble">
+              <p>Welcome to Scribe AI Chat! Ask me anything about the ongoing or last recorded meeting transcript. 🎙️</p>
+            </div>
+          </div>
 
-        <!-- WebSocket Card -->
-        <div class="input-group">
-          <label for="ws-url">STT WebSocket Server</label>
-          <input type="text" id="ws-url" placeholder="ws://localhost:8080/stt" />
-          <span class="help-text">Streaming endpoint for transcribing meeting audio chunks.</span>
+          <!-- Chat input area -->
+          <div class="chat-input-wrapper" style="display: flex; gap: 6px; margin-top: 10px;">
+            <input type="text" id="chat-input" placeholder="Ask about meeting details..." style="flex: 1; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); border-radius: 10px; padding: 8px 12px; font-size: 12px; color: var(--text-primary); outline: none;" />
+            <button type="button" id="btn-send-chat" class="btn btn-primary" style="width: auto; padding: 0 16px; border-radius: 10px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 12px;">Send</button>
+          </div>
         </div>
-      </section>
-
-      <!-- Action Footer -->
-      <div class="actions">
-        <button id="save-settings" class="btn btn-primary">Save Settings</button>
-        <button id="reset-session" class="btn btn-secondary">Reset Active Session</button>
       </div>
 
       <div id="toast" class="toast hidden">Settings Saved Successfully!</div>
     </main>
   </div>
+  <script src="../services/db.js"></script>
+  <script src="../services/geminiService.js"></script>
+  <script src="../services/cryptoHelper.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

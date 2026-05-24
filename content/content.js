@@ -12,6 +12,7 @@
   let activeState = 'IDLE'; // IDLE | RECORDING | SUMMARIZING | COMPLETED | ERROR
   let activeTab = 'TRANSCRIPT'; // TRANSCRIPT | SUMMARY
   let captureMode = 'websocket'; // 'websocket' | 'gmeet'
+  let uiLanguage = 'vi'; // 'vi' | 'en'
   let isMinimized = false;
   let dragOffset = { x: 0, y: 0 };
   let isDragging = false;
@@ -85,9 +86,10 @@
 
     // Initial state loading
     if (!checkContextValidity()) return;
-    chrome.storage.local.get(['recordingState', 'recordingError', 'finalSummary', 'captureMode'], (data) => {
+    chrome.storage.local.get(['recordingState', 'recordingError', 'finalSummary', 'captureMode', 'uiLanguage'], (data) => {
       activeState = data.recordingState || 'IDLE';
       captureMode = data.captureMode || 'websocket';
+      uiLanguage = data.uiLanguage || 'vi';
       const errorMsg = data.recordingError;
       const cachedSummary = data.finalSummary;
 
@@ -148,6 +150,33 @@
    * Generates whole inner HTML of floating panel based on minimize state.
    */
   function renderPanelLayout() {
+    const t = {
+      vi: {
+        captureMode: '📡 Nguồn ghi âm',
+        wsMode: '🎙️ Bằng Giọng Nói (WebSocket STT)',
+        gmeetMode: '📋 Bằng Phụ Đề (Google Meet)',
+        startRec: '🔴 Bắt đầu Ghi',
+        stopRec: '⏹️ Dừng & Tóm tắt',
+        cancelRec: '❌ Hủy bỏ',
+        liveLogs: 'Nhật ký Trực tiếp',
+        aiSummary: 'Tóm tắt AI',
+        noLogs: 'Chưa có bản ghi âm. Nhấn Bắt đầu để bắt đầu thu.',
+        noReports: 'Chưa có báo cáo thông minh. Hoàn thành phiên ghi âm để tạo báo cáo.'
+      },
+      en: {
+        captureMode: '📡 Capture Mode',
+        wsMode: '🎙️ Voice (WebSocket STT)',
+        gmeetMode: '📋 Captions (Google Meet)',
+        startRec: '🔴 Start Recording',
+        stopRec: '⏹️ Stop & Summary',
+        cancelRec: '❌ Cancel',
+        liveLogs: 'Live Logs',
+        aiSummary: 'AI Summary',
+        noLogs: 'No audio transcribed yet. Click Start to begin capturing.',
+        noReports: 'No intelligence reports compiled yet. Complete a recording session to generate reports.'
+      }
+    }[uiLanguage] || t['vi'];
+
     if (isMinimized) {
       overlayEl.className = 'gemini-scribe-overlay minimized';
       overlayEl.innerHTML = `<div class="scribe-logo" title="Gemini Scribe Dashboard">✨</div>`;
@@ -185,10 +214,10 @@
         <!-- Capture Mode Selector -->
         <div style="padding: 16px 20px 4px 20px;">
           <div class="scribe-mode-selector">
-            <label class="scribe-mode-label">📡 Capture Mode</label>
+            <label class="scribe-mode-label">${t.captureMode}</label>
             <select id="scribe-capture-mode" class="scribe-mode-dropdown">
-              <option value="websocket">🎙️ WebSocket STT (Deepgram)</option>
-              <option value="gmeet">📋 Lấy theo Google Meet</option>
+              <option value="websocket">${t.wsMode}</option>
+              <option value="gmeet">${t.gmeetMode}</option>
             </select>
           </div>
         </div>
@@ -196,29 +225,29 @@
         <!-- Control buttons row -->
         <div style="padding: 8px 20px 8px 20px;">
           <div class="scribe-actions-row">
-            <button id="scribe-start-btn" class="scribe-btn scribe-btn-start">🔴 Start Recording</button>
-            <button id="scribe-stop-btn" class="scribe-btn scribe-btn-stop" disabled>⏹️ Stop & Summary</button>
-            <button id="scribe-cancel-btn" class="scribe-btn scribe-btn-cancel" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5;">❌ Hủy bỏ</button>
+            <button id="scribe-start-btn" class="scribe-btn scribe-btn-start">${t.startRec}</button>
+            <button id="scribe-stop-btn" class="scribe-btn scribe-btn-stop" disabled>${t.stopRec}</button>
+            <button id="scribe-cancel-btn" class="scribe-btn scribe-btn-cancel" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5;">${t.cancelRec}</button>
           </div>
         </div>
 
         <!-- Navigation Tabs -->
         <nav class="scribe-tabs">
-          <div class="scribe-tab active" id="scribe-tab-transcript">Live Logs</div>
-          <div class="scribe-tab" id="scribe-tab-summary">AI Summary</div>
+          <div class="scribe-tab active" id="scribe-tab-transcript">${t.liveLogs}</div>
+          <div class="scribe-tab" id="scribe-tab-summary">${t.aiSummary}</div>
         </nav>
 
         <!-- Dynamic Panels -->
         <div class="scribe-panel-content" id="scribe-panel-transcript">
           <div class="scribe-transcript-box" id="scribe-live-box" style="height: 330px;">
-            <div class="scribe-transcript-empty">No audio transcribed yet. Click Start to begin capturing.</div>
+            <div class="scribe-transcript-empty">${t.noLogs}</div>
           </div>
         </div>
 
         <div class="scribe-panel-content hidden" id="scribe-panel-summary">
           <!-- Summary Container -->
           <div id="scribe-summary-view" class="scribe-summary-box">
-            <div class="scribe-transcript-empty">No intelligence reports compiled yet. Complete a recording session to generate reports.</div>
+            <div class="scribe-transcript-empty">${t.noReports}</div>
           </div>
         </div>
       </div>
@@ -528,6 +557,35 @@
     const summaryView = document.getElementById('scribe-summary-view');
     if (!summaryView || !data) return;
 
+    const t = {
+      vi: {
+        noTopics: 'Chưa có chủ đề nào được tóm tắt.',
+        noDecisions: 'Chưa có quyết định nào được ghi nhận.',
+        noActions: 'Không có công việc nào được phân công.',
+        unassigned: 'Chưa phân công',
+        noDeadline: 'Không xác định',
+        topicsTitle: '📌 Các Chủ đề Chính',
+        decisionsTitle: '🎯 Các Quyết định',
+        actionsTitle: '🚀 Công việc (Tasks)',
+        exportExcel: '📥 Xuất Excel',
+        exportTitle: 'Xuất danh sách sang Microsoft Excel',
+        noExportData: 'Không có công việc nào để xuất!'
+      },
+      en: {
+        noTopics: 'No structured topics extracted.',
+        noDecisions: 'No decisions explicitly agreed upon.',
+        noActions: 'No direct action items assigned.',
+        unassigned: 'Unassigned',
+        noDeadline: 'Not specified',
+        topicsTitle: '📌 Key Topics Discussed',
+        decisionsTitle: '🎯 Agreements & Decisions',
+        actionsTitle: '🚀 Tasks & Action Items',
+        exportExcel: '📥 Export Excel',
+        exportTitle: 'Export list to Microsoft Excel',
+        noExportData: 'No action items to export!'
+      }
+    }[uiLanguage] || t['vi'];
+
     // 1. Build Topics Section
     let topicsHtml = '';
     if (data.topics && data.topics.length > 0) {
@@ -544,7 +602,7 @@
         console.error('Topic render crash:', err);
       }
     } else {
-      topicsHtml = '<div class="scribe-transcript-empty">No structured topics extracted.</div>';
+      topicsHtml = `<div class="scribe-transcript-empty">${t.noTopics}</div>`;
     }
 
     // 2. Build Decisions Section
@@ -554,15 +612,15 @@
         decisionsHtml += `<div class="scribe-decision-item">${escapeHtml(dec)}</div>`;
       });
     } else {
-      decisionsHtml = '<div class="scribe-transcript-empty">No decisions explicitly agreed.</div>';
+      decisionsHtml = `<div class="scribe-transcript-empty">${t.noDecisions}</div>`;
     }
 
     // 3. Build Action Items Section
     let actionsHtml = '';
     if (data.actionItems && data.actionItems.length > 0) {
       data.actionItems.forEach((action) => {
-        const assignee = action.assignee || 'Unassigned';
-        const deadline = action.deadline || 'Not specified';
+        const assignee = action.assignee || t.unassigned;
+        const deadline = action.deadline || t.noDeadline;
         actionsHtml += `
           <div class="scribe-action-item" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
             <div class="scribe-action-details" style="flex: 1; min-width: 0;">
@@ -582,33 +640,35 @@
         `;
       });
     } else {
-      actionsHtml = '<div class="scribe-transcript-empty">No direct action items assigned.</div>';
+      actionsHtml = `<div class="scribe-transcript-empty">${t.noActions}</div>`;
     }
 
     // Compile into dashboard bento layout
     summaryView.innerHTML = `
-      <!-- Topics Section -->
-      <section class="scribe-summary-section">
-        <h3 class="scribe-section-title">📌 Key Topics Discussed</h3>
-        ${topicsHtml}
-      </section>
+      <div class="scribe-summary-wrapper">
+        <!-- Topics Section -->
+        <section class="scribe-summary-section">
+          <h3 class="scribe-section-title">${t.topicsTitle}</h3>
+          ${topicsHtml}
+        </section>
 
-      <!-- Decisions Section -->
-      <section class="scribe-summary-section">
-        <h3 class="scribe-section-title">🎯 Agreements & Decisions</h3>
-        ${decisionsHtml}
-      </section>
+        <!-- Decisions Section -->
+        <section class="scribe-summary-section">
+          <h3 class="scribe-section-title">${t.decisionsTitle}</h3>
+          ${decisionsHtml}
+        </section>
 
-      <!-- Action Items Section -->
-      <section class="scribe-summary-section">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px;">
-          <h3 class="scribe-section-title" style="margin-bottom: 0;">🚀 Tasks & Action Items</h3>
-          <button id="scribe-export-excel-btn" class="scribe-export-btn" title="Xuất danh sách sang Microsoft Excel">
-            📥 Xuất Excel
-          </button>
-        </div>
-        ${actionsHtml}
-      </section>
+        <!-- Action Items Section -->
+        <section class="scribe-summary-section">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px;">
+            <h3 class="scribe-section-title" style="margin-bottom: 0;">${t.actionsTitle}</h3>
+            <button id="scribe-export-excel-btn" class="scribe-export-btn" title="${t.exportTitle}">
+              ${t.exportExcel}
+            </button>
+          </div>
+          ${actionsHtml}
+        </section>
+      </div>
     `;
 
     // Bind Export Excel event
@@ -617,7 +677,7 @@
       exportBtn.addEventListener('click', () => {
         const statusSelects = document.querySelectorAll('.scribe-action-status');
         if (statusSelects.length === 0) {
-          alert('Không có Task & Action items nào để xuất!');
+          alert(t.noExportData);
           return;
         }
 
@@ -1013,6 +1073,21 @@
 
     if (message.action === 'SUMMARIZATION_ERROR') {
       updateStateView('ERROR', message.error);
+    }
+  });
+
+  // Listen for storage changes to update UI language dynamically
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local' && changes.uiLanguage) {
+      uiLanguage = changes.uiLanguage.newValue || 'vi';
+      if (!isMinimized) {
+        // Re-render layout to apply language switch
+        renderPanelLayout();
+        // Restore active states after re-rendering
+        chrome.storage.local.get(['recordingState', 'recordingError', 'finalSummary'], (data) => {
+          updateStateView(data.recordingState || 'IDLE', data.recordingError, data.finalSummary);
+        });
+      }
     }
   });
 

@@ -247,6 +247,43 @@ async function ensureOffscreenDocument() {
  * Handle whole recording start flow:
  * Clear database -> Grab Tab Stream ID -> Setup Offscreen -> Send START message to Offscreen
  */
+/**
+ * Safe utility to retrieve Deepgram API key from session storage first,
+ * falling back to local storage (ignoring if encrypted/locked).
+ */
+async function getSavedDeepgramApiKey() {
+  return new Promise((resolve) => {
+    if (typeof chrome === 'undefined' || !chrome.storage) {
+      resolve('');
+      return;
+    }
+    if (chrome.storage.session) {
+      chrome.storage.session.get(['deepgramApiKey'], (sessionResult) => {
+        if (sessionResult && sessionResult.deepgramApiKey) {
+          resolve(sessionResult.deepgramApiKey);
+          return;
+        }
+        chrome.storage.local.get(['deepgramApiKey'], (localResult) => {
+          const rawKey = localResult.deepgramApiKey;
+          if (!rawKey) {
+            resolve('');
+            return;
+          }
+          if (typeof rawKey === 'object' && rawKey.ciphertext) {
+            resolve(''); // Locked
+            return;
+          }
+          resolve(rawKey);
+        });
+      });
+    } else {
+      chrome.storage.local.get(['deepgramApiKey'], (result) => {
+        resolve(result.deepgramApiKey || '');
+      });
+    }
+  });
+}
+
 async function startMeetingRecording(tabId, wsUrl) {
   updateGlobalState('RECORDING');
   startKeepAliveHeartbeat();
@@ -255,9 +292,8 @@ async function startMeetingRecording(tabId, wsUrl) {
     // 1. Clear database to start fresh session
     await clearTranscriptDatabase();
 
-    // 2. Fetch the Deepgram API key from storage to pass to the offscreen document
-    const storage = await chrome.storage.local.get(['deepgramApiKey']);
-    const deepgramApiKey = storage.deepgramApiKey || '';
+    // 2. Fetch the Deepgram API key from safe storage to pass to the offscreen document
+    const deepgramApiKey = await getSavedDeepgramApiKey();
 
     // 3. Spawn offscreen window
     await ensureOffscreenDocument();
@@ -357,7 +393,9 @@ async function triggerSummarizationWorkflow() {
     }
 
     // 2. Direct fetch and chunking call to Gemini
-    const summaryResult = await generateMeetingSummary(fullTranscript);
+    const storageUiLang = await chrome.storage.local.get(['uiLanguage']);
+    const uiLanguage = storageUiLang.uiLanguage || 'vi';
+    const summaryResult = await generateMeetingSummary(fullTranscript, uiLanguage);
 
     // 3. Save final summary data to local storage
     await new Promise((resolve) => {
