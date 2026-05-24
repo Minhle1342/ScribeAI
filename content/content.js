@@ -809,9 +809,13 @@
 
   /**
    * Append a Google Meet caption entry to the Live Logs panel with speaker badge.
+   * Groups consecutive segments from the same speaker onto the same row.
    */
   function appendGmeetCaption(speaker, text) {
     if (isMinimized) return;
+
+    const trimmedText = text.trim();
+    if (!trimmedText) return;
 
     const liveBox = document.getElementById('scribe-live-box');
     if (!liveBox) return;
@@ -822,16 +826,40 @@
       liveBox.innerHTML = '';
     }
 
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const segment = document.createElement('div');
-    segment.className = 'scribe-transcript-segment';
-    segment.innerHTML = `
-      <span class="scribe-timestamp">[${timeStr}]</span>
-      <span class="scribe-speaker-badge">${escapeHtml(speaker)}</span>
-      <span>${escapeHtml(text)}</span>
-    `;
+    // Check if the last rendered segment belongs to the SAME speaker
+    const segments = liveBox.querySelectorAll('.scribe-transcript-segment');
+    const lastSegment = segments[segments.length - 1];
+    
+    let isSameSpeaker = false;
+    if (lastSegment) {
+      const badgeEl = lastSegment.querySelector('.scribe-speaker-badge');
+      if (badgeEl && badgeEl.textContent.trim() === speaker.trim()) {
+        isSameSpeaker = true;
+      }
+    }
 
-    liveBox.appendChild(segment);
+    if (isSameSpeaker && lastSegment) {
+      // Append new text to the existing row
+      const spans = lastSegment.querySelectorAll('span');
+      const textSpan = spans[spans.length - 1];
+      if (textSpan) {
+        const currentVal = textSpan.textContent.trim();
+        // Separate with space if not empty
+        textSpan.textContent = currentVal + (currentVal ? ' ' : '') + trimmedText;
+      }
+    } else {
+      // Create a brand new segment row
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const segment = document.createElement('div');
+      segment.className = 'scribe-transcript-segment';
+      segment.innerHTML = `
+        <span class="scribe-timestamp">[${timeStr}]</span>
+        <span class="scribe-speaker-badge">${escapeHtml(speaker)}</span>
+        <span>${escapeHtml(trimmedText)}</span>
+      `;
+      liveBox.appendChild(segment);
+    }
+
     liveBox.scrollTop = liveBox.scrollHeight;
   }
 
