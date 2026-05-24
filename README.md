@@ -110,6 +110,38 @@ Tiện ích đã được nâng cấp mạnh mẽ với các tính năng cốt l
   * **Dịch thuật đa ngôn ngữ qua Gemini Vision**: Hỗ trợ nhận diện và dịch trực tiếp sang các ngôn ngữ **Tiếng Việt**, **English**, **Français** thông qua sức mạnh xử lý đa phương tiện của mô hình Gemini Vision gửi an toàn từ background worker.
   * **Kết quả Glassmorphism & Hủy nhanh**: Hiển thị kết quả trong một hộp thoại nổi thiết kế Glassmorphism tuyệt đẹp có hỗ trợ copy 1-click, đồng thời hỗ trợ phím tắt `Escape` để hủy bỏ chế độ chụp màn hình tức thì.
 
+### 6. Quản Lý Quy Trình SOP & Đường Ống Micro-MRP Pipeline 🤖
+* **Tích hợp Cơ sở Tri thức SOP (Knowledge Base)**:
+  * Cung cấp tab chuyên biệt **SOP Docs** ngay trên giao diện Popup của Chrome Extension.
+  * Hỗ trợ người dùng nhập liệu tự do (paste văn bản thô) hoặc tải lên trực tiếp các tệp tin quy trình như `.txt`, `.md`, `.csv` với cơ chế đọc file thời gian thực tiện lợi.
+  * Tự động lưu trữ và đồng bộ hóa cơ sở tri thức SOP an toàn trong bộ nhớ cục bộ của tiện ích (`chrome.storage.local`).
+* **Khai thác Khó khăn từ Cuộc họp (Extract Difficulties)**:
+  * Khi hoàn tất ghi âm, luồng xử lý của Gemini sẽ phân tích sâu transcript để tự động bóc tách các vấn đề thực tiễn, rủi ro, và khó khăn phát sinh trong cuộc họp dựa trên JSON Schema chuẩn Việt.
+* **Gợi ý Giải pháp Tuân thủ (Grounded Compliance Agent)**:
+  * Bên cạnh mỗi khó khăn được liệt kê trong tab **AI Summary**, hệ thống tự động sinh một nút tương tác **🤖 Gợi ý AI**.
+  * Khi nhấp chọn nút này, hệ thống sẽ kích hoạt đường ống **Micro-MRP SOP Grounding Pipeline** chạy ngầm để truy vấn chéo Gemini.
+  * Gemini hoạt động dưới vai trò là một **SOP Compliance Agent (Tác nhân Kiểm soát Quy trình)**, thực hiện đối soát khó khăn với cơ sở dữ liệu SOP đã lưu.
+* **Nguyên tắc Chống Hallucination (Strict Citation Enforcement)**:
+  * **Grounding Tuyệt đối**: Nếu không có giải pháp trong SOP, hệ thống phản hồi chính xác `"Not found in provided SOP documents."`, triệt tiêu hoàn toàn khả năng AI tự bịa đặt giải pháp.
+  * **Trích dẫn Minh bạch**: Đối với các giải pháp hợp lệ, Gemini bắt buộc phải trích xuất và trả về **nguyên văn đoạn câu văn quy trình thực tế** từ tệp SOP để làm bằng chứng xác thực (`citation`), hiển thị trực quan dưới dạng hộp trích dẫn viền nét đứt xanh lá cây bắt mắt.
+
+```mermaid
+graph TD
+    subgraph Micro-MRP SOP Grounding Pipeline
+        A[Transcript cuộc họp] -->|Gemini Summary AI| B[Danh sách Khó khăn - difficulties]
+        B -->|Hiển thị trên UI| C[Nút Gợi ý AI]
+        C -->|Click| D[Background Service Worker]
+        D -->|Đọc SOP| E[chrome.storage.local: sopRawText]
+        D -->|Truy vấn Gemini| F[Plan-Review & Grounding Prompt]
+        E --> F
+        F -->|Bắt buộc Trích dẫn| G{Gemini Compliance Engine}
+        G -->|Tìm thấy| H[Trả về Giải pháp + Trích dẫn SOP chính xác]
+        G -->|Không tìm thấy| I[Not found in provided SOP documents.]
+        H -->|Hiển thị UI| J[Gợi ý hiển thị dạng Glassmorphism + Citation box]
+        I -->|Hiển thị UI| K[Thông báo dạng nghiêng xám]
+    end
+```
+
 ---
 
 ## 🛠️ Hướng Dẫn Cài Đặt & Khởi Động Dự Án
