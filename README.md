@@ -101,6 +101,15 @@ Tiện ích đã được nâng cấp mạnh mẽ với các tính năng cốt l
 ### 4. Ưu Tiên Phản Hồi Tiếng Việt (Vietnamese-First JSON Schema)
 * Cấu trúc Prompt hệ thống ép buộc Gemini trả về định dạng JSON thuần Việt 100% giúp báo cáo tổng kết cuộc họp đạt độ tự nhiên cao, mạch lạc và sát nghĩa nhất với văn hóa hội họp tại Việt Nam.
 
+### 5. Bút Thần Kỳ - Magic Pencil (Screen Crop & Translate) ✨
+* **Trích xuất & Dịch thuật hình ảnh tức thì**: Tích hợp công cụ chụp ảnh màn hình thông minh bằng cách nhấp chọn biểu tượng **Cây đũa thần (🪄)** trên thanh tiêu đề của bảng điều khiển.
+* **Quy trình tối ưu trải nghiệm (UX)**:
+  * **Chụp ảnh sạch**: Tự động ẩn bảng điều khiển Scribe AI trong `150ms` trước khi chụp ảnh màn hình bằng `captureVisibleTab` để tránh bảng điều khiển che khuất nội dung trang web.
+  * **Khung vẽ Glowing Neon**: Vẽ vùng chọn tùy ý bằng chuột trái qua một lớp canvas phủ toàn màn hình với hiệu ứng làm tối nền và viền sáng neon tím (`#a855f7`) cao cấp.
+  * **Thanh công cụ nổi (Floating Action Bar)**: Tự động tính toán vị trí nổi tối ưu phía trên vùng chọn để cung cấp các tác vụ dịch thuật nhanh hoặc sao chép chữ OCR.
+  * **Dịch thuật đa ngôn ngữ qua Gemini Vision**: Hỗ trợ nhận diện và dịch trực tiếp sang các ngôn ngữ **Tiếng Việt**, **English**, **Français** thông qua sức mạnh xử lý đa phương tiện của mô hình Gemini Vision gửi an toàn từ background worker.
+  * **Kết quả Glassmorphism & Hủy nhanh**: Hiển thị kết quả trong một hộp thoại nổi thiết kế Glassmorphism tuyệt đẹp có hỗ trợ copy 1-click, đồng thời hỗ trợ phím tắt `Escape` để hủy bỏ chế độ chụp màn hình tức thì.
+
 ---
 
 ## 🛠️ Hướng Dẫn Cài Đặt & Khởi Động Dự Án
