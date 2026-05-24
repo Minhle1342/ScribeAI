@@ -138,7 +138,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     clearTranscriptDatabase().then(() => {
       chrome.storage.local.set({
         finalSummary: null,
-        lastCompiledTranscript: null
+        lastCompiledTranscript: null,
+        gmeetCaptions: {}
       }, () => {
         updateGlobalState('IDLE');
         sendResponse({ success: true });
@@ -149,6 +150,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: false, error: err.message });
     });
     return true;
+  }
+
+  // 4c. Handle Google Meet caption updates in-place
+  if (message.action === 'UPDATE_GMEET_CAPTION') {
+    chrome.storage.local.get(['gmeetCaptions'], (data) => {
+      const gmeetCaptions = data.gmeetCaptions || {};
+      gmeetCaptions[message.blockKey] = {
+        speaker: message.speaker,
+        text: message.text,
+        timestamp: gmeetCaptions[message.blockKey]?.timestamp || Date.now()
+      };
+      chrome.storage.local.set({ gmeetCaptions });
+    });
+    return false;
   }
 
   // 5. Pipe Live Transcripts from Offscreen to Content Script
@@ -322,8 +337,20 @@ async function triggerSummarizationWorkflow() {
 
   try {
     // 1. Retrieve full compiled transcript
-    const fullTranscript = await getCompiledTranscript();
-    console.log('Loaded compiled transcript from IndexedDB. Size:', fullTranscript.length);
+    let fullTranscript = '';
+    const storageMode = await chrome.storage.local.get(['captureMode']);
+    const currentMode = storageMode.captureMode || 'websocket';
+
+    if (currentMode === 'gmeet') {
+      const storage = await chrome.storage.local.get(['gmeetCaptions']);
+      const captions = storage.gmeetCaptions || {};
+      const sortedBlocks = Object.values(captions).sort((a, b) => a.timestamp - b.timestamp);
+      fullTranscript = sortedBlocks.map(b => `[${b.speaker}]: ${b.text}`).join('\n');
+    } else {
+      fullTranscript = await getCompiledTranscript();
+    }
+
+    console.log('Loaded compiled transcript. Size:', fullTranscript.length);
 
     if (!fullTranscript || fullTranscript.trim() === '') {
       throw new Error('No meeting transcript found. Record audio or verify WebSocket connection.');
@@ -377,7 +404,8 @@ async function resetSession() {
   await new Promise((resolve) => {
     chrome.storage.local.set({
       finalSummary: null,
-      lastCompiledTranscript: null
+      lastCompiledTranscript: null,
+      gmeetCaptions: {}
     }, () => {
       updateGlobalState('IDLE');
       resolve();

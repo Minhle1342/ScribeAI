@@ -85,8 +85,9 @@
 
     // Initial state loading
     if (!checkContextValidity()) return;
-    chrome.storage.local.get(['recordingState', 'recordingError', 'finalSummary'], (data) => {
+    chrome.storage.local.get(['recordingState', 'recordingError', 'finalSummary', 'captureMode'], (data) => {
       activeState = data.recordingState || 'IDLE';
+      captureMode = data.captureMode || 'websocket';
       const errorMsg = data.recordingError;
       const cachedSummary = data.finalSummary;
 
@@ -244,6 +245,9 @@
     // Mode change event
     modeSelect.addEventListener('change', (e) => {
       captureMode = e.target.value;
+      if (checkContextValidity()) {
+        chrome.storage.local.set({ captureMode: captureMode });
+      }
       console.log('[Scribe] Capture mode switched to:', captureMode);
     });
 
@@ -264,8 +268,12 @@
         // Google Meet caption scraping mode
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        startGmeetCaptionObserver();
-        updateStateView('RECORDING');
+        if (checkContextValidity()) {
+          chrome.storage.local.set({ gmeetCaptions: {} }, () => {
+            startGmeetCaptionObserver();
+            updateStateView('RECORDING');
+          });
+        }
         return;
       }
 
@@ -747,8 +755,8 @@
           // Generate a unique key for this block
           const blockKey = generateBlockKey(block);
           lastCaptionTexts.set(blockKey, text);
-          appendGmeetCaption(speaker, text);
-          saveCaptionToStorage(speaker, text);
+          appendGmeetCaption(speaker, text, blockKey);
+          saveCaptionToStorage(blockKey, speaker, text);
         }
       }
     });
@@ -777,19 +785,8 @@
     // Only process if text is genuinely new or changed
     if (currentText !== previousText) {
       lastCaptionTexts.set(blockKey, currentText);
-
-      // If it's an update to an existing block, emit only the new portion
-      if (previousText && currentText.startsWith(previousText)) {
-        const newPortion = currentText.slice(previousText.length).trim();
-        if (newPortion) {
-          appendGmeetCaption(speaker, newPortion);
-          saveCaptionToStorage(speaker, newPortion);
-        }
-      } else {
-        // Completely new block or replaced text
-        appendGmeetCaption(speaker, currentText);
-        saveCaptionToStorage(speaker, currentText);
-      }
+      appendGmeetCaption(speaker, currentText, blockKey);
+      saveCaptionToStorage(blockKey, speaker, currentText);
     }
   }
 
@@ -808,10 +805,10 @@
   }
 
   /**
-   * Append a Google Meet caption entry to the Live Logs panel with speaker badge.
-   * Groups consecutive segments from the same speaker onto the same row.
+   * Append or update a Google Meet caption entry in the Live Logs panel with speaker badge.
+   * Matches caption blocks by blockKey to allow real-time text updates in-place.
    */
-  function appendGmeetCaption(speaker, text) {
+  function appendGmeetCaption(speaker, text, blockKey) {
     if (isMinimized) return;
 
     const trimmedText = text.trim();
@@ -826,36 +823,25 @@
       liveBox.innerHTML = '';
     }
 
-    // Check if the last rendered segment belongs to the SAME speaker
-    const segments = liveBox.querySelectorAll('.scribe-transcript-segment');
-    const lastSegment = segments[segments.length - 1];
-    
-    let isSameSpeaker = false;
-    if (lastSegment) {
-      const badgeEl = lastSegment.querySelector('.scribe-speaker-badge');
-      if (badgeEl && badgeEl.textContent.trim() === speaker.trim()) {
-        isSameSpeaker = true;
-      }
-    }
+    // Try to find an existing segment row for this blockKey
+    let segment = liveBox.querySelector(`[data-block-key="${blockKey}"]`);
 
-    if (isSameSpeaker && lastSegment) {
-      // Append new text to the existing row
-      const spans = lastSegment.querySelectorAll('span');
-      const textSpan = spans[spans.length - 1];
+    if (segment) {
+      // Update text in-place!
+      const textSpan = segment.querySelector('.scribe-segment-text');
       if (textSpan) {
-        const currentVal = textSpan.textContent.trim();
-        // Separate with space if not empty
-        textSpan.textContent = currentVal + (currentVal ? ' ' : '') + trimmedText;
+        textSpan.textContent = trimmedText;
       }
     } else {
       // Create a brand new segment row
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const segment = document.createElement('div');
+      segment = document.createElement('div');
       segment.className = 'scribe-transcript-segment';
+      segment.setAttribute('data-block-key', blockKey);
       segment.innerHTML = `
         <span class="scribe-timestamp">[${timeStr}]</span>
         <span class="scribe-speaker-badge">${escapeHtml(speaker)}</span>
-        <span>${escapeHtml(trimmedText)}</span>
+        <span class="scribe-segment-text">${escapeHtml(trimmedText)}</span>
       `;
       liveBox.appendChild(segment);
     }
@@ -866,12 +852,13 @@
   /**
    * Persist scraped caption text into IndexedDB via background worker for summarization.
    */
-  function saveCaptionToStorage(speaker, text) {
+  function saveCaptionToStorage(blockKey, speaker, text) {
     if (!checkContextValidity()) return;
-    const fullText = `[${speaker}]: ${text}`;
     chrome.runtime.sendMessage({
-      action: 'TRANSCRIPT_APPENDED',
-      text: fullText
+      action: 'UPDATE_GMEET_CAPTION',
+      blockKey: blockKey,
+      speaker: speaker,
+      text: text
     });
   }
 
