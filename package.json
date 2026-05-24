@@ -1,0 +1,15 @@
+{
+  "name": "gemini-meeting-recorder-extension",
+  "version": "1.0.0",
+  "description": "Chrome Extension for Google Meet recording, transcribing, and summarizing using Gemini API.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node services/tests.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "author": "Antigravity Architect",
+  "license": "MIT"
+}

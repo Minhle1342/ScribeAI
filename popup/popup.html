@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Recorder Config</title>
+  <!-- Load Premium Google Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="glass-container">
+    <header class="header">
+      <div class="logo-area">
+        <div class="logo-icon">✨</div>
+        <h1>Scribe AI</h1>
+      </div>
+      <p class="tagline">Real-time Meeting Intelligence</p>
+    </header>
+
+    <main class="content">
+      <!-- State Indicator Card -->
+      <div class="card status-card">
+        <div class="status-header">
+          <span class="label">System State</span>
+          <span id="status-badge" class="badge idle">Idle</span>
+        </div>
+        <div class="status-detail" id="status-detail">Ready to capture meeting audio.</div>
+      </div>
+
+      <!-- Settings Section -->
+      <section class="section">
+        <h2>Configuration</h2>
+        
+        <!-- Gemini Key Card -->
+        <div class="input-group">
+          <label for="api-key">Gemini API Key (BYOK)</label>
+          <div class="password-wrapper">
+            <input type="password" id="api-key" placeholder="Enter your Gemini API key" autocomplete="off" />
+            <button type="button" id="toggle-key-visibility" class="btn-icon" title="Toggle visibility">👁️</button>
+          </div>
+          <span class="help-text">Your key is stored securely in your local browser instance.</span>
+        </div>
+
+        <!-- Deepgram Key Card -->
+        <div class="input-group">
+          <label for="deepgram-key">Deepgram API Key (STT)</label>
+          <div class="password-wrapper">
+            <input type="password" id="deepgram-key" placeholder="Enter Deepgram key (Optional for live STT)" autocomplete="off" />
+            <button type="button" id="toggle-deepgram-visibility" class="btn-icon" title="Toggle visibility">👁️</button>
+          </div>
+          <span class="help-text">Optional. If empty, server defaults to Mock Mode.</span>
+        </div>
+
+        <!-- Gemini Model Card -->
+        <div class="input-group">
+          <label for="gemini-model">Gemini Model</label>
+          <select id="gemini-model">
+            <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview (Default / Free)</option>
+            <option value="gemini-2.5-flash">gemini-2.5-flash (Fast / Free)</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro (High Intel / Free)</option>
+            <option value="gemini-2.0-flash">gemini-2.0-flash (Recommended / Free)</option>
+            <option value="gemini-2.0-flash-lite-preview-02-05">gemini-2.0-flash-lite-preview (Ultra-fast / Free)</option>
+            <option value="gemini-1.5-flash">gemini-1.5-flash (Legacy Flash / Free)</option>
+            <option value="gemini-1.5-pro">gemini-1.5-pro (Legacy Pro / Free)</option>
+          </select>
+          <span class="help-text">Select your preferred model. Default is gemini-3.1-flash-lite-preview.</span>
+        </div>
+
+        <!-- WebSocket Card -->
+        <div class="input-group">
+          <label for="ws-url">STT WebSocket Server</label>
+          <input type="text" id="ws-url" placeholder="ws://localhost:8080/stt" />
+          <span class="help-text">Streaming endpoint for transcribing meeting audio chunks.</span>
+        </div>
+      </section>
+
+      <!-- Action Footer -->
+      <div class="actions">
+        <button id="save-settings" class="btn btn-primary">Save Settings</button>
+        <button id="reset-session" class="btn btn-secondary">Reset Active Session</button>
+      </div>
+
+      <div id="toast" class="toast hidden">Settings Saved Successfully!</div>
+    </main>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

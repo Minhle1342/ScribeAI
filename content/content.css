@@ -1,0 +1,617 @@
+/* content.css */
+
+/* Gemini Scribe Panel Namespace to isolate styles from GMeet/Teams page */
+.gemini-scribe-overlay {
+  all: initial; /* Reset all inheritances */
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  width: 380px;
+  max-height: 85vh;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 8, 20, 0.7);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), 0 0 40px rgba(111, 66, 193, 0.15);
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #f3f1f8;
+  overflow: hidden;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+  user-select: none;
+}
+
+.gemini-scribe-overlay.minimized {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  right: 24px;
+  top: 80px;
+  background: linear-gradient(135deg, hsl(262, 83%, 62%) 0%, hsl(282, 85%, 55%) 100%);
+  box-shadow: 0 10px 30px rgba(111, 66, 193, 0.4);
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.gemini-scribe-overlay.minimized:hover {
+  transform: scale(1.08) translateY(-2px);
+  box-shadow: 0 15px 35px rgba(111, 66, 193, 0.5);
+}
+
+/* Drag Handle Header */
+.scribe-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: move; /* Draggable indicator */
+}
+
+.scribe-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.scribe-logo {
+  font-size: 20px;
+  animation: scribe-float 3s ease-in-out infinite;
+}
+
+.scribe-title-text {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  background: linear-gradient(120deg, #ffffff 40%, #a49fc6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.scribe-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.scribe-btn-header {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #a49fc6;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.scribe-btn-header:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  transform: scale(1.05);
+}
+
+/* Main Dashboard Panels */
+.scribe-body {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  overflow: hidden;
+  max-height: 60vh;
+}
+
+/* Tab Navigation */
+.scribe-tabs {
+  display: flex;
+  background: rgba(0, 0, 0, 0.15);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.scribe-tab {
+  flex: 1;
+  padding: 12px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: #a49fc6;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-bottom: 2px solid transparent;
+}
+
+.scribe-tab.active {
+  color: #ffffff;
+  border-bottom-color: hsl(265, 85%, 65%);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.scribe-tab:hover:not(.active) {
+  color: #d1cde6;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+/* Panel view structures */
+.scribe-panel-content {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.scribe-panel-content.hidden {
+  display: none !important;
+}
+
+/* Controls View */
+.scribe-state-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.scribe-status-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scribe-status-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #a49fc6;
+  letter-spacing: 0.8px;
+}
+
+.scribe-status-badge {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scribe-status-badge::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a49fc6;
+}
+
+.scribe-status-badge.recording::before {
+  background: #ef4444;
+  animation: scribe-pulse-dot 1.5s infinite;
+}
+
+.scribe-status-badge.summarizing::before {
+  background: #f59e0b;
+  animation: scribe-pulse-dot 1.5s infinite;
+}
+
+.scribe-status-badge.completed::before {
+  background: #10b981;
+}
+
+.scribe-status-badge.error::before {
+  background: #dc2626;
+}
+
+/* Control Buttons */
+.scribe-actions-row {
+  display: flex;
+  gap: 10px;
+}
+
+.scribe-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.scribe-btn-start {
+  background: linear-gradient(135deg, hsl(262, 83%, 62%) 0%, hsl(282, 85%, 55%) 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 15px rgba(111, 66, 193, 0.25);
+}
+
+.scribe-btn-start:hover:not(:disabled) {
+  background: linear-gradient(135deg, hsl(262, 90%, 65%) 0%, hsl(282, 95%, 60%) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(111, 66, 193, 0.35);
+}
+
+.scribe-btn-stop {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+.scribe-btn-stop:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.25);
+  transform: translateY(-1px);
+}
+
+.scribe-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Transcript Panel Live Scrolling Box */
+.scribe-transcript-box {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+  padding: 16px;
+  height: 250px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #d1cde6;
+}
+
+.scribe-transcript-empty {
+  color: #a49fc6;
+  text-align: center;
+  font-style: italic;
+  margin-top: 80px;
+}
+
+.scribe-transcript-segment {
+  margin-bottom: 12px;
+  animation: scribe-fade-in 0.3s ease;
+}
+
+.scribe-timestamp {
+  font-size: 10px;
+  color: #7b75a4;
+  margin-right: 6px;
+}
+
+/* Capture Mode Selector */
+.scribe-mode-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scribe-mode-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #a49fc6;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.scribe-mode-dropdown {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #f3f1f8;
+  font-size: 13px;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a49fc6' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  transition: all 0.2s ease;
+}
+
+.scribe-mode-dropdown:hover {
+  border-color: rgba(111, 66, 193, 0.4);
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.scribe-mode-dropdown:focus {
+  outline: none;
+  border-color: hsl(265, 85%, 65%);
+  box-shadow: 0 0 0 3px rgba(111, 66, 193, 0.15);
+}
+
+.scribe-mode-dropdown option {
+  background: #1a1625;
+  color: #f3f1f8;
+  padding: 8px;
+}
+
+/* Speaker Name Badge for Google Meet mode */
+.scribe-speaker-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  margin-right: 6px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(111, 66, 193, 0.2) 0%, rgba(59, 130, 246, 0.15) 100%);
+  color: #cbbafb;
+  border: 1px solid rgba(111, 66, 193, 0.25);
+  letter-spacing: 0.2px;
+}
+
+/* Summary Card Visual Layout */
+.scribe-summary-box {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.scribe-summary-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.scribe-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #ffffff;
+  letter-spacing: 0.8px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Topics list style */
+.scribe-topic-card {
+  border-left: 3px solid hsl(265, 85%, 65%);
+  padding-left: 12px;
+  margin-bottom: 12px;
+}
+
+.scribe-topic-card:last-child {
+  margin-bottom: 0;
+}
+
+.scribe-topic-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 4px;
+}
+
+.scribe-topic-text {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #d1cde6;
+}
+
+/* Decisions bullet points */
+.scribe-decision-item {
+  position: relative;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #d1cde6;
+  margin-bottom: 8px;
+}
+
+.scribe-decision-item::before {
+  content: '🎯';
+  position: absolute;
+  left: 0;
+  top: 1px;
+  font-size: 12px;
+}
+
+/* Action Checklists */
+.scribe-action-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.01);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.scribe-action-checkbox {
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.scribe-action-details {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scribe-action-task {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ffffff;
+  line-height: 1.4;
+}
+
+.scribe-action-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scribe-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+
+.scribe-pill-assignee {
+  background: rgba(111, 66, 193, 0.15);
+  color: #cbbafb;
+  border: 1px solid rgba(111, 66, 193, 0.25);
+}
+
+.scribe-pill-deadline {
+  background: rgba(255, 255, 255, 0.06);
+  color: #a49fc6;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Loading Panel Spinner Overlay */
+.scribe-loading-panel {
+  text-align: center;
+  padding: 60px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.scribe-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(111, 66, 193, 0.15);
+  border-top-color: hsl(265, 85%, 65%);
+  border-radius: 50%;
+  animation: scribe-spin 1s linear infinite;
+}
+
+.scribe-loading-text {
+  font-size: 14px;
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.scribe-loading-subtext {
+  font-size: 12px;
+  color: #a49fc6;
+}
+
+/* Error message component */
+.scribe-error-panel {
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  border-radius: 14px;
+  padding: 16px;
+  text-align: center;
+  color: #fca5a5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scribe-error-title {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.scribe-error-text {
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* Custom styled Scrollbars */
+.scribe-transcript-box::-webkit-scrollbar,
+.scribe-panel-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scribe-transcript-box::-webkit-scrollbar-track,
+.scribe-panel-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scribe-transcript-box::-webkit-scrollbar-thumb,
+.scribe-panel-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+
+.scribe-transcript-box::-webkit-scrollbar-thumb:hover,
+.scribe-panel-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Keyframes and Animations */
+@keyframes scribe-float {
+  0% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-3px) rotate(6deg); }
+  100% { transform: translateY(0px) rotate(0deg); }
+}
+
+@keyframes scribe-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes scribe-pulse-dot {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+@keyframes scribe-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Beautiful real-time mixed audio soundwave visualizer */
+.scribe-volume-meter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  width: 100%;
+}
+.scribe-vol-label {
+  font-size: 11px;
+  color: #a49fc6;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+.scribe-wave-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 20px;
+}
+.scribe-bar {
+  width: 3px;
+  height: 3px; /* Minimal height to indicate ready state */
+  background: linear-gradient(180deg, #3b82f6 0%, #10b981 100%);
+  border-radius: 2px;
+  transition: height 0.08s ease-out, background 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 0 4px rgba(59, 130, 246, 0.2);
+}
