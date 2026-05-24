@@ -17,7 +17,8 @@
     "https://teams.microsoft.com/*",
     "https://*.zoom.us/*",
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup/popup.html",

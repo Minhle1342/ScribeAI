@@ -677,3 +677,174 @@
   box-shadow: 0 2px 6px rgba(16, 185, 129, 0.2);
 }
 
+/* Magic Pencil Snipping and Translation Styles */
+.scribe-crop-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 999999;
+  cursor: crosshair;
+  background: transparent;
+  user-select: none;
+}
+
+.scribe-crop-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.scribe-crop-toolbar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(15, 12, 30, 0.95);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(168, 85, 247, 0.15);
+  z-index: 1000000;
+  pointer-events: auto;
+  animation: scribe-fade-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scribe-crop-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.scribe-crop-btn:hover {
+  background: linear-gradient(135deg, hsl(262, 83%, 62%) 0%, hsl(282, 85%, 55%) 100%);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.scribe-crop-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.8);
+  border-color: rgba(239, 68, 68, 0.9);
+}
+
+.scribe-crop-select {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 24px 6px 10px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  transition: all 0.2s ease;
+  font-family: inherit;
+  outline: none;
+}
+
+.scribe-crop-select:hover {
+  border-color: rgba(168, 85, 247, 0.6);
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.scribe-crop-select option {
+  background: #140c22;
+  color: #ffffff;
+}
+
+/* Multimodal Vision Results Card */
+.scribe-result-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 1000005;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  animation: scribe-fade-in 0.25s ease;
+}
+
+.scribe-result-card {
+  width: 520px;
+  max-width: 90vw;
+  max-height: 80vh;
+  background: rgba(15, 12, 30, 0.96);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  border-radius: 20px;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6), 0 0 40px rgba(168, 85, 247, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #f3f1f8;
+  animation: scribe-scale-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scribe-result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.scribe-result-title {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scribe-result-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex-grow: 1;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #e2def2;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.scribe-result-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* Scale animation */
+@keyframes scribe-scale-up {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+

@@ -16,9 +16,14 @@
   let isMinimized = false;
   let dragOffset = { x: 0, y: 0 };
   let isDragging = false;
+  let wasDragged = false;
   let overlayEl = null;
   let gmeetObserver = null; // MutationObserver for Google Meet captions
   let lastCaptionTexts = new Map(); // Track last known text per speaker block to detect changes
+
+  // Magic Pencil State Management
+  let currentCropCleanup = null;
+  let activeCropToolbar = null;
 
   // Context validity helper to catch extension reloads gracefully
   function checkContextValidity() {
@@ -105,24 +110,47 @@
    * Drag handle controller to relocate floating component.
    */
   function setupDragging() {
-    const handle = overlayEl.querySelector('.scribe-header');
-    if (!handle) return;
+    let dragStartX = 0;
+    let dragStartY = 0;
 
-    handle.addEventListener('mousedown', (e) => {
-      // Ignore clicks on header action buttons
-      if (e.target.closest('.scribe-btn-header')) return;
-      if (isMinimized) return;
+    const startDrag = (e) => {
+      // Allow only left click dragging
+      if (e.button !== 0) return;
+
+      if (isMinimized) {
+        // If minimized, dragging is allowed anywhere on miniView
+        if (!e.target.closest('.scribe-minimized-view')) return;
+      } else {
+        // If full view, dragging is allowed only on the header, excluding buttons
+        if (!e.target.closest('.scribe-header')) return;
+        if (e.target.closest('.scribe-btn-header')) return;
+      }
 
       isDragging = true;
+      wasDragged = false;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
       dragOffset.x = e.clientX - overlayEl.offsetLeft;
       dragOffset.y = e.clientY - overlayEl.offsetTop;
       
       document.addEventListener('mousemove', onDrag);
       document.addEventListener('mouseup', stopDrag);
-    });
+      
+      // Prevent text selection during drag
+      e.preventDefault();
+    };
+
+    // Attach dragging to the main overlay element (delegated)
+    overlayEl.addEventListener('mousedown', startDrag);
 
     function onDrag(e) {
       if (!isDragging) return;
+
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        wasDragged = true;
+      }
       
       // Keep inside boundary margins
       let x = e.clientX - dragOffset.x;
@@ -153,8 +181,8 @@
     const t = {
       vi: {
         captureMode: '📡 Nguồn ghi âm',
-        wsMode: '🎙️ Bằng Giọng Nói (WebSocket STT)',
-        gmeetMode: '📋 Bằng Phụ Đề (Google Meet)',
+        wsMode: '🎙️ Bằng Giọng Nói',
+        gmeetMode: '📋 Bằng Phụ Đề (Google meet)',
         startRec: '🔴 Bắt đầu Ghi',
         stopRec: '⏹️ Dừng & Tóm tắt',
         cancelRec: '❌ Hủy bỏ',
@@ -177,77 +205,72 @@
       }
     }[uiLanguage] || t['vi'];
 
-    if (isMinimized) {
-      overlayEl.className = 'gemini-scribe-overlay minimized';
-      overlayEl.innerHTML = `<div class="scribe-logo" title="Gemini Scribe Dashboard">✨</div>`;
-      
-      overlayEl.onclick = () => {
-        if (!checkContextValidity()) return;
-        isMinimized = false;
-        renderPanelLayout();
-        // Restore active states
-        chrome.storage.local.get(['recordingState', 'recordingError', 'finalSummary'], (data) => {
-          updateStateView(data.recordingState || 'IDLE', data.recordingError, data.finalSummary);
-        });
-      };
-      return;
-    }
+    const miniDisplay = isMinimized ? 'display: flex;' : 'display: none;';
+    const fullDisplay = isMinimized ? 'display: none;' : 'display: flex;';
 
-    // Full Expanded Layout
-    overlayEl.className = 'gemini-scribe-overlay';
-    overlayEl.onclick = null; // Remove minimize expand trigger
-    
+    overlayEl.className = isMinimized ? 'gemini-scribe-overlay minimized' : 'gemini-scribe-overlay';
+    overlayEl.onclick = null; // We handle minimize internally
+
     overlayEl.innerHTML = `
-      <!-- Draggable Header -->
-      <header class="scribe-header">
-        <div class="scribe-header-title">
-          <span class="scribe-logo">✨</span>
-          <span class="scribe-title-text">Gemini Scribe</span>
-        </div>
-        <div class="scribe-header-actions">
-          <button class="scribe-btn-header" id="scribe-minimize-btn" title="Minimize Panel">➖</button>
-        </div>
-      </header>
+      <!-- Minimized view -->
+      <div class="scribe-minimized-view" title="Gemini Scribe Dashboard" style="${miniDisplay} width: 100%; height: 100%; justify-content: center; align-items: center; border-radius: 50%; cursor: pointer;">
+        <div class="scribe-logo" style="font-size: 24px;">✨</div>
+      </div>
 
-      <!-- Main Body panel -->
-      <div class="scribe-body">
-        <!-- Capture Mode Selector -->
-        <div style="padding: 16px 20px 4px 20px;">
-          <div class="scribe-mode-selector">
-            <label class="scribe-mode-label">${t.captureMode}</label>
-            <select id="scribe-capture-mode" class="scribe-mode-dropdown">
-              <option value="websocket">${t.wsMode}</option>
-              <option value="gmeet">${t.gmeetMode}</option>
-            </select>
+      <!-- Full view -->
+      <div class="scribe-full-view" style="${fullDisplay} flex-direction: column; width: 100%; max-height: inherit; flex-grow: 1;">
+        <!-- Draggable Header -->
+        <header class="scribe-header">
+          <div class="scribe-header-title">
+            <span class="scribe-logo">✨</span>
+            <span class="scribe-title-text">Gemini Scribe</span>
           </div>
-        </div>
-
-        <!-- Control buttons row -->
-        <div style="padding: 8px 20px 8px 20px;">
-          <div class="scribe-actions-row">
-            <button id="scribe-start-btn" class="scribe-btn scribe-btn-start">${t.startRec}</button>
-            <button id="scribe-stop-btn" class="scribe-btn scribe-btn-stop" disabled>${t.stopRec}</button>
-            <button id="scribe-cancel-btn" class="scribe-btn scribe-btn-cancel" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5;">${t.cancelRec}</button>
+          <div class="scribe-header-actions">
+            <button class="scribe-btn-header" id="scribe-magic-btn" title="Magic pencil">🪄</button>
+            <button class="scribe-btn-header" id="scribe-minimize-btn" title="Minimize Panel">➖</button>
           </div>
-        </div>
+        </header>
 
-        <!-- Navigation Tabs -->
-        <nav class="scribe-tabs">
-          <div class="scribe-tab active" id="scribe-tab-transcript">${t.liveLogs}</div>
-          <div class="scribe-tab" id="scribe-tab-summary">${t.aiSummary}</div>
-        </nav>
-
-        <!-- Dynamic Panels -->
-        <div class="scribe-panel-content" id="scribe-panel-transcript">
-          <div class="scribe-transcript-box" id="scribe-live-box" style="height: 330px;">
-            <div class="scribe-transcript-empty">${t.noLogs}</div>
+        <!-- Main Body panel -->
+        <div class="scribe-body">
+          <!-- Capture Mode Selector -->
+          <div style="padding: 16px 20px 4px 20px;">
+            <div class="scribe-mode-selector">
+              <label class="scribe-mode-label">${t.captureMode}</label>
+              <select id="scribe-capture-mode" class="scribe-mode-dropdown">
+                <option value="websocket">${t.wsMode}</option>
+                <option value="gmeet">${t.gmeetMode}</option>
+              </select>
+            </div>
           </div>
-        </div>
 
-        <div class="scribe-panel-content hidden" id="scribe-panel-summary">
-          <!-- Summary Container -->
-          <div id="scribe-summary-view" class="scribe-summary-box">
-            <div class="scribe-transcript-empty">${t.noReports}</div>
+          <!-- Control buttons row -->
+          <div style="padding: 8px 20px 8px 20px;">
+            <div class="scribe-actions-row">
+              <button id="scribe-start-btn" class="scribe-btn scribe-btn-start">${t.startRec}</button>
+              <button id="scribe-stop-btn" class="scribe-btn scribe-btn-stop" disabled>${t.stopRec}</button>
+              <button id="scribe-cancel-btn" class="scribe-btn scribe-btn-cancel" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5;">${t.cancelRec}</button>
+            </div>
+          </div>
+
+          <!-- Navigation Tabs -->
+          <nav class="scribe-tabs">
+            <div class="scribe-tab active" id="scribe-tab-transcript">${t.liveLogs}</div>
+            <div class="scribe-tab" id="scribe-tab-summary">${t.aiSummary}</div>
+          </nav>
+
+          <!-- Dynamic Panels -->
+          <div class="scribe-panel-content" id="scribe-panel-transcript">
+            <div class="scribe-transcript-box" id="scribe-live-box" style="height: 330px;">
+              <div class="scribe-transcript-empty">${t.noLogs}</div>
+            </div>
+          </div>
+
+          <div class="scribe-panel-content hidden" id="scribe-panel-summary">
+            <!-- Summary Container -->
+            <div id="scribe-summary-view" class="scribe-summary-box">
+              <div class="scribe-transcript-empty">${t.noReports}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -262,11 +285,19 @@
    */
   function setupControllers() {
     const minimizeBtn = document.getElementById('scribe-minimize-btn');
+    const magicBtn = document.getElementById('scribe-magic-btn');
     const startBtn = document.getElementById('scribe-start-btn');
     const stopBtn = document.getElementById('scribe-stop-btn');
     const tabTranscript = document.getElementById('scribe-tab-transcript');
     const tabSummary = document.getElementById('scribe-tab-summary');
     const modeSelect = document.getElementById('scribe-capture-mode');
+
+    if (magicBtn) {
+      magicBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        startMagicPencilFlow();
+      });
+    }
 
     // Restore saved capture mode
     modeSelect.value = captureMode;
@@ -280,12 +311,47 @@
       console.log('[Scribe] Capture mode switched to:', captureMode);
     });
 
+    // Minimize toggle function
+    function setMinimizedState(minimized) {
+      if (!checkContextValidity()) return;
+      isMinimized = minimized;
+      const miniView = overlayEl.querySelector('.scribe-minimized-view');
+      const fullView = overlayEl.querySelector('.scribe-full-view');
+      
+      if (minimized) {
+        overlayEl.classList.add('minimized');
+        if (fullView) fullView.style.display = 'none';
+        if (miniView) miniView.style.display = 'flex';
+      } else {
+        overlayEl.classList.remove('minimized');
+        if (fullView) fullView.style.display = 'flex';
+        if (miniView) miniView.style.display = 'none';
+        
+        // Auto-scroll transcript box to bottom on unminimize
+        const liveBox = document.getElementById('scribe-live-box');
+        if (liveBox) {
+          liveBox.scrollTop = liveBox.scrollHeight;
+        }
+      }
+    }
+
     // Minimize event
     minimizeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      isMinimized = true;
-      renderPanelLayout();
+      setMinimizedState(true);
     });
+
+    const miniView = overlayEl.querySelector('.scribe-minimized-view');
+    if (miniView) {
+      miniView.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (wasDragged) {
+          wasDragged = false;
+          return;
+        }
+        setMinimizedState(false);
+      });
+    }
 
     // Tab switching
     tabTranscript.addEventListener('click', () => switchTab('TRANSCRIPT'));
@@ -405,7 +471,6 @@
    */
   function updateStateView(state, errorMsg = null, summaryData = null) {
     activeState = state;
-    if (isMinimized) return; // Ignore updates if hidden
 
     const startBtn = document.getElementById('scribe-start-btn');
     const stopBtn = document.getElementById('scribe-stop-btn');
@@ -494,8 +559,6 @@
    * Append a transcribed segment block to the live transcript display container.
    */
   function appendLiveTranscript(text) {
-    if (isMinimized) return;
-
     const liveBox = document.getElementById('scribe-live-box');
     if (!liveBox) return;
 
@@ -962,8 +1025,6 @@
    * Matches caption blocks by blockKey to allow real-time text updates in-place.
    */
   function appendGmeetCaption(speaker, text, blockKey) {
-    if (isMinimized) return;
-
     const trimmedText = text.trim();
     if (!trimmedText) return;
 
@@ -1080,15 +1141,362 @@
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.uiLanguage) {
       uiLanguage = changes.uiLanguage.newValue || 'vi';
-      if (!isMinimized) {
-        // Re-render layout to apply language switch
-        renderPanelLayout();
-        // Restore active states after re-rendering
-        chrome.storage.local.get(['recordingState', 'recordingError', 'finalSummary'], (data) => {
-          updateStateView(data.recordingState || 'IDLE', data.recordingError, data.finalSummary);
-        });
-      }
+      // Re-render layout to apply language switch
+      renderPanelLayout();
+      // Restore active states after re-rendering
+      chrome.storage.local.get(['recordingState', 'recordingError', 'finalSummary'], (data) => {
+        updateStateView(data.recordingState || 'IDLE', data.recordingError, data.finalSummary);
+      });
     }
   });
+
+  // =========================================================================
+  // Magic Pencil (Screen Crop & Translate) Integration
+  // =========================================================================
+
+  function startMagicPencilFlow() {
+    if (!checkContextValidity()) return;
+
+    // 1. Smoothly fade out scribe panel overlay so it doesn't get screenshotted
+    overlayEl.style.opacity = '0';
+    overlayEl.style.pointerEvents = 'none';
+
+    // 2. Allow DOM to render hidden state, then capture the tab
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ action: 'CAPTURE_VISIBLE_TAB' }, (response) => {
+        // Restore overlay immediately
+        overlayEl.style.opacity = '1';
+        overlayEl.style.pointerEvents = 'auto';
+
+        if (!response || !response.success) {
+          alert('Lỗi chụp ảnh màn hình: ' + (response?.error || 'Unknown error'));
+          return;
+        }
+
+        initializeScreenCropper(response.dataUrl);
+      });
+    }, 150);
+  }
+
+  function initializeScreenCropper(dataUrl) {
+    // Prevent duplicate croppers
+    if (document.querySelector('.scribe-crop-overlay')) return;
+
+    const cropOverlay = document.createElement('div');
+    cropOverlay.className = 'scribe-crop-overlay';
+
+    const canvas = document.createElement('canvas');
+    canvas.className = 'scribe-crop-canvas';
+    cropOverlay.appendChild(canvas);
+    document.body.appendChild(cropOverlay);
+
+    const img = new Image();
+    img.src = dataUrl;
+    img.onload = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      
+      // Draw initial screen state
+      ctx.drawImage(img, 0, 0, width, height);
+
+      let isDrawing = false;
+      let startX = 0;
+      let startY = 0;
+      let endX = 0;
+      let endY = 0;
+
+      const drawCropArea = () => {
+        // Redraw screenshot
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Semi-transparent mask overlay
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.fillRect(0, 0, width, height);
+        
+        const rectX = Math.min(startX, endX);
+        const rectY = Math.min(startY, endY);
+        const rectW = Math.abs(startX - endX);
+        const rectH = Math.abs(startY - endY);
+
+        ctx.clearRect(rectX, rectY, rectW, rectH);
+        
+        // Restore clear image at active region
+        ctx.drawImage(img, rectX, rectY, rectW, rectH, rectX, rectY, rectW, rectH);
+
+        // Glowing border design
+        ctx.strokeStyle = '#a855f7';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rectX, rectY, rectW, rectH);
+      };
+
+      const handleMouseDown = (e) => {
+        if (e.button !== 0) return; // Only left click
+        isDrawing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        endX = e.clientX;
+        endY = e.clientY;
+        removeCropToolbar();
+      };
+
+      const handleMouseMove = (e) => {
+        if (!isDrawing) return;
+        endX = e.clientX;
+        endY = e.clientY;
+        drawCropArea();
+      };
+
+      const handleMouseUp = (e) => {
+        if (!isDrawing) return;
+        isDrawing = false;
+        endX = e.clientX;
+        endY = e.clientY;
+
+        const rectW = Math.abs(startX - endX);
+        const rectH = Math.abs(startY - endY);
+
+        if (rectW < 5 || rectH < 5) {
+          showCropToast('Vùng chọn quá nhỏ. Hãy vẽ lại!');
+          ctx.drawImage(img, 0, 0, width, height);
+          return;
+        }
+
+        const rectX = Math.min(startX, endX);
+        const rectY = Math.min(startY, endY);
+        showCropToolbar(rectX, rectY, rectW, rectH, img);
+      };
+
+      cropOverlay.addEventListener('mousedown', handleMouseDown);
+      cropOverlay.addEventListener('mousemove', handleMouseMove);
+      cropOverlay.addEventListener('mouseup', handleMouseUp);
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Escape') {
+          cleanupCropper();
+        }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+
+      const cleanupCropper = () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        removeCropToolbar();
+        cropOverlay.remove();
+      };
+
+      currentCropCleanup = cleanupCropper;
+    };
+  }
+
+  function removeCropToolbar() {
+    if (activeCropToolbar) {
+      activeCropToolbar.remove();
+      activeCropToolbar = null;
+    }
+  }
+
+  function showCropToolbar(x, y, w, h, img) {
+    removeCropToolbar();
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'scribe-crop-toolbar';
+    
+    // Position adjustments to float right above selection
+    let topPos = y - 46;
+    if (topPos < 10) topPos = y + h + 10; // place below if no top room
+    let leftPos = x + w - 240;
+    if (leftPos < 10) leftPos = x;
+    
+    toolbar.style.top = `${topPos}px`;
+    toolbar.style.left = `${leftPos}px`;
+
+    toolbar.innerHTML = `
+      <button class="scribe-crop-btn" id="scribe-crop-copy" title="Copy text extracted from screen">📋 Trích xuất</button>
+      <select class="scribe-crop-select" id="scribe-crop-lang" title="Select translation target language">
+        <option value="vi">Tiếng Việt</option>
+        <option value="en">English</option>
+        <option value="fr">Français</option>
+      </select>
+      <button class="scribe-crop-btn" id="scribe-crop-trans" title="Translate extracted text">🪄 Dịch</button>
+      <button class="scribe-crop-btn danger" id="scribe-crop-close" title="Cancel snip (ESC)">❌</button>
+    `;
+
+    document.body.appendChild(toolbar);
+
+    const closeBtn = toolbar.querySelector('#scribe-crop-close');
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (currentCropCleanup) currentCropCleanup();
+    };
+
+    const copyBtn = toolbar.querySelector('#scribe-crop-copy');
+    copyBtn.onclick = async (e) => {
+      e.stopPropagation();
+      await executeVisionAction('extract', x, y, w, h, img, 'vi');
+    };
+
+    const transBtn = toolbar.querySelector('#scribe-crop-trans');
+    transBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const lang = toolbar.querySelector('#scribe-crop-lang').value;
+      await executeVisionAction('translate', x, y, w, h, img, lang);
+    };
+
+    activeCropToolbar = toolbar;
+  }
+
+  async function executeVisionAction(mode, x, y, w, h, img, targetLang) {
+    try {
+      const toolbar = activeCropToolbar;
+      if (toolbar) {
+        toolbar.innerHTML = `
+          <div class="scribe-spinner" style="width: 20px; height: 20px; border-width: 2px; border-top-color: #a855f7;"></div>
+          <span style="font-size:12px; font-weight:500; color: #ffffff;">Đang phân tích bằng Gemini...</span>
+        `;
+      }
+
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = w;
+      cropCanvas.height = h;
+      const cropCtx = cropCanvas.getContext('2d');
+      cropCtx.drawImage(img, x, y, w, h, 0, 0, w, h);
+      
+      const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.85);
+      const base64Data = dataUrl.split(',')[1];
+
+      let prompt = '';
+      if (mode === 'extract') {
+        prompt = 'Analyze the provided image. Perform highly accurate Optical Character Recognition (OCR) and extract all readable text. Retain the original layout, structure, and line breaks where possible. Output ONLY the extracted text. Do not write any introduction, pleasantries, or explanations.';
+      } else {
+        const langMap = {
+          vi: 'Vietnamese',
+          en: 'English',
+          fr: 'French'
+        };
+        const langName = langMap[targetLang] || 'Vietnamese';
+        prompt = `Analyze the provided image. First, perform highly accurate OCR to extract the text. Then, translate the extracted text into ${langName}. Output ONLY the translated text. Retain natural line breaks and formatting. Do not include any explanations, introductions, or annotations.`;
+      }
+
+      chrome.runtime.sendMessage({
+        action: 'GEMINI_VISION_REQUEST',
+        base64Image: base64Data,
+        prompt: prompt
+      }, (response) => {
+        if (currentCropCleanup) currentCropCleanup();
+
+        if (!response || !response.success) {
+          alert('Lỗi phân tích hình ảnh: ' + (response?.error || 'Unknown error'));
+          return;
+        }
+
+        showVisionResultModal(response.text, mode === 'extract' ? 'Kết quả trích xuất chữ' : 'Kết quả dịch thuật');
+      });
+
+    } catch (err) {
+      console.error('Vision action failed:', err);
+      alert('Không thể thực hiện tác vụ: ' + err.message);
+      if (currentCropCleanup) currentCropCleanup();
+    }
+  }
+
+  function showVisionResultModal(text, titleText) {
+    const existing = document.querySelector('.scribe-result-modal-backdrop');
+    if (existing) existing.remove();
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'scribe-result-modal-backdrop';
+
+    const card = document.createElement('div');
+    card.className = 'scribe-result-card';
+
+    card.innerHTML = `
+      <div class="scribe-result-header">
+        <div class="scribe-result-title">✨ ${titleText}</div>
+        <button class="scribe-btn-header" id="scribe-result-close-x" title="Close">❌</button>
+      </div>
+      <div class="scribe-result-body">${escapeHtml(text)}</div>
+      <div class="scribe-result-footer">
+        <button class="scribe-crop-btn" id="scribe-result-copy" style="background: linear-gradient(135deg, hsl(262, 83%, 62%) 0%, hsl(282, 85%, 55%) 100%);">📋 Sao chép</button>
+        <button class="scribe-crop-btn danger" id="scribe-result-close">Đóng</button>
+      </div>
+    `;
+
+    backdrop.appendChild(card);
+    document.body.appendChild(backdrop);
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    const closeX = card.querySelector('#scribe-result-close-x');
+    const closeBtn = card.querySelector('#scribe-result-close');
+    const copyBtn = card.querySelector('#scribe-result-copy');
+
+    const closeModal = () => {
+      backdrop.remove();
+    };
+
+    closeX.onclick = closeModal;
+    closeBtn.onclick = closeModal;
+    backdrop.onclick = (e) => {
+      if (e.target === backdrop) closeModal();
+    };
+
+    copyBtn.onclick = (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.innerHTML = '✅ Đã sao chép!';
+        setTimeout(() => {
+          copyBtn.innerHTML = '📋 Sao chép';
+        }, 2000);
+      }).catch(err => {
+        console.error('Failed to copy text:', err);
+      });
+    };
+  }
+
+  function showCropToast(msg) {
+    const existing = document.querySelector('.scribe-crop-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'scribe-crop-toast';
+    toast.style.cssText = `
+      position: fixed;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      background: rgba(220, 38, 38, 0.95);
+      border: 1px solid rgba(220, 38, 38, 0.4);
+      color: #ffffff;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 1000002;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+      font-family: sans-serif;
+      animation: scribe-fade-in 0.2s ease;
+    `;
+    toast.innerText = msg;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      toast.remove();
+    }, 2500);
+  }
 
 })();

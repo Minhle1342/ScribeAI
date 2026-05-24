@@ -221,6 +221,89 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       stopKeepAliveHeartbeat();
     }
   }
+
+  // 8. Capture Visible Tab for Magic Pencil
+  if (message.action === 'CAPTURE_VISIBLE_TAB') {
+    chrome.tabs.captureVisibleTab(null, { format: 'png' }, (dataUrl) => {
+      if (chrome.runtime.lastError) {
+        console.error('Screen capture failed:', chrome.runtime.lastError.message);
+        sendResponse({ success: false, error: chrome.runtime.lastError.message });
+      } else if (!dataUrl) {
+        sendResponse({ success: false, error: 'Failed to retrieve screenshot data.' });
+      } else {
+        sendResponse({ success: true, dataUrl: dataUrl });
+      }
+    });
+    return true; // Keep response channel open async
+  }
+
+  // 9. Multimodal Vision Request for Magic Pencil
+  if (message.action === 'GEMINI_VISION_REQUEST') {
+    (async () => {
+      try {
+        const apiKey = await self.geminiService.getSavedApiKey();
+        const model = await self.geminiService.getSavedModel();
+        
+        // Ensure a multimodal vision model is selected (defaulting to gemini-1.5-flash for compatibility)
+        const visionModel = model.includes('flash') ? model : 'gemini-1.5-flash';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${visionModel}:generateContent?key=${apiKey}`;
+        
+        const payload = {
+          contents: [
+            {
+              parts: [
+                {
+                  text: message.prompt
+                },
+                {
+                  inlineData: {
+                    mimeType: "image/jpeg",
+                    data: message.base64Image
+                  }
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            topP: 0.95,
+            maxOutputTokens: 1024
+          }
+        };
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          let errorMsg = `HTTP Error ${response.status}: ${response.statusText}`;
+          try {
+            const errorJson = await response.json();
+            if (errorJson.error && errorJson.error.message) {
+              errorMsg = errorJson.error.message;
+            }
+          } catch (_) {}
+          throw new Error(errorMsg);
+        }
+
+        const result = await response.json();
+        const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) {
+          throw new Error('Gemini returned an empty response.');
+        }
+
+        sendResponse({ success: true, text: rawText });
+      } catch (err) {
+        console.error('Gemini Vision request failed:', err);
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true; // Keep response channel open async
+  }
 });
 
 /**
