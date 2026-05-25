@@ -706,16 +706,7 @@
         cancelBtn.disabled = true;
 
         chrome.runtime.sendMessage({ action: 'CANCEL_RECORDING_REQUEST' }, (response) => {
-          startBtn.disabled = false;
-          stopBtn.disabled = true;
-          cancelBtn.disabled = false;
-          cancelBtn.style.display = 'none';
-
-          // Reset logs panel
-          const liveBox = document.getElementById('scribe-live-box');
-          if (liveBox) {
-            liveBox.innerHTML = '<div class="scribe-transcript-empty">Recording cancelled. Click Start to begin capturing.</div>';
-          }
+          updateStateView('IDLE');
         });
       });
     }
@@ -793,7 +784,10 @@
           pauseBtn.textContent = t.pauseRec;
         }
         stopBtn.disabled = false;
-        if (cancelBtn) cancelBtn.style.display = 'flex';
+        if (cancelBtn) {
+          cancelBtn.style.display = 'flex';
+          cancelBtn.disabled = false;
+        }
         if (statusText) statusText.textContent = 'Recording';
         if (exportContainer) exportContainer.style.display = 'none';
         break;
@@ -806,7 +800,10 @@
           pauseBtn.style.display = 'none';
         }
         stopBtn.disabled = false;
-        if (cancelBtn) cancelBtn.style.display = 'flex';
+        if (cancelBtn) {
+          cancelBtn.style.display = 'flex';
+          cancelBtn.disabled = false;
+        }
         if (statusText) statusText.textContent = 'Paused';
         if (exportContainer) exportContainer.style.display = 'block';
         break;
@@ -816,7 +813,10 @@
         startBtn.disabled = true;
         if (pauseBtn) pauseBtn.style.display = 'none';
         stopBtn.disabled = true;
-        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (cancelBtn) {
+          cancelBtn.style.display = 'none';
+          cancelBtn.disabled = true;
+        }
         if (statusText) statusText.textContent = 'Summarizing';
         if (exportContainer) exportContainer.style.display = 'none';
         showLoadingSpinner('Synthesizing Meeting Intelligence...', 'Gemini is compiling topic segments & rolling summaries.');
@@ -829,7 +829,10 @@
         startBtn.textContent = t.startRec;
         if (pauseBtn) pauseBtn.style.display = 'none';
         stopBtn.disabled = true;
-        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (cancelBtn) {
+          cancelBtn.style.display = 'none';
+          cancelBtn.disabled = true;
+        }
         if (statusText) statusText.textContent = 'Done';
         if (exportContainer) exportContainer.style.display = 'none';
         
@@ -851,9 +854,34 @@
         startBtn.textContent = t.startRec;
         if (pauseBtn) pauseBtn.style.display = 'none';
         stopBtn.disabled = true;
-        if (cancelBtn) cancelBtn.style.display = 'flex';
+        if (cancelBtn) {
+          cancelBtn.style.display = 'flex';
+          cancelBtn.disabled = false;
+        }
         if (statusText) statusText.textContent = 'Error';
         if (exportContainer) exportContainer.style.display = 'none';
+
+        if (errorMsg === 'Microphone permission blocked or not granted.') {
+          const liveBox = document.getElementById('scribe-live-box');
+          if (liveBox) {
+            liveBox.innerHTML = `
+              <div class="scribe-mic-warning-card">
+                <div class="scribe-mic-warning-header">
+                  <span class="scribe-mic-warning-icon">🎙️</span>
+                  <span class="scribe-mic-warning-title">Microphone Access Blocked</span>
+                </div>
+                <div class="scribe-mic-warning-desc">
+                  Microphone access denied. Please click the Scribe AI extension icon (🧩) in the top right of your browser to grant permission.
+                </div>
+                <div class="scribe-mic-warning-footer">
+                  💡 Tip: After allowing permission in the popup, click "Start Recording" again.
+                </div>
+              </div>
+            `;
+          }
+          switchTab('TRANSCRIPT');
+        }
+
         showErrorPanel(errorMsg || 'A system capture error occurred.');
         break;
 
@@ -864,7 +892,10 @@
         startBtn.textContent = t.startRec;
         if (pauseBtn) pauseBtn.style.display = 'none';
         stopBtn.disabled = true;
-        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (cancelBtn) {
+          cancelBtn.style.display = 'none';
+          cancelBtn.disabled = false;
+        }
         if (statusText) statusText.textContent = 'Idle';
         if (exportContainer) exportContainer.style.display = 'none';
         
@@ -961,10 +992,7 @@
         noDifficulties: 'Không ghi nhận khó khăn hoặc sự cố nào phát sinh.',
         aiSuggestBtn: '🤖 Gợi ý AI',
         thinking: 'Đang xử lý...',
-        citationTitle: 'Trích dẫn quy trình SOP:',
-        exportExcel: '📥 Xuất Excel',
-        exportTitle: 'Xuất danh sách sang Microsoft Excel',
-        noExportData: 'Không có công việc nào để xuất!'
+        citationTitle: 'Trích dẫn quy trình SOP:'
       },
       en: {
         noTopics: 'No structured topics extracted.',
@@ -979,10 +1007,7 @@
         noDifficulties: 'No process difficulties or incidents were reported.',
         aiSuggestBtn: '🤖 AI Suggestion',
         thinking: 'Thinking...',
-        citationTitle: 'SOP Citation:',
-        exportExcel: '📥 Export Excel',
-        exportTitle: 'Export list to Microsoft Excel',
-        noExportData: 'No action items to export!'
+        citationTitle: 'SOP Citation:'
       }
     }[uiLanguage] || t['vi'];
 
@@ -1095,12 +1120,7 @@
 
         <!-- Decisions Section -->
         <section class="scribe-summary-section">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px;">
-            <h3 class="scribe-section-title" style="margin-bottom: 0;">${t.decisionsTitle}</h3>
-            <button id="scribe-export-excel-btn" class="scribe-export-btn" title="${t.exportTitle}">
-              ${t.exportExcel}
-            </button>
-          </div>
+          <h3 class="scribe-section-title">${t.decisionsTitle}</h3>
           ${decisionsHtml}
         </section>
 
@@ -1118,52 +1138,7 @@
       </div>
     `;
 
-    // Bind Export Excel event
-    const exportBtn = document.getElementById('scribe-export-excel-btn');
-    if (exportBtn) {
-      exportBtn.addEventListener('click', () => {
-        const statusSelects = document.querySelectorAll('.scribe-action-status');
-        if (statusSelects.length === 0) {
-          alert(t.noExportData);
-          return;
-        }
 
-        const items = [];
-        statusSelects.forEach(select => {
-          items.push({
-            assignee: select.getAttribute('data-assignee') || '',
-            task: select.getAttribute('data-task') || '',
-            deadline: select.getAttribute('data-deadline') || '',
-            status: select.value
-          });
-        });
-
-        // Generate CSV file content with BOM to support Vietnamese character displays in Excel
-        const BOM = '\uFEFF';
-        let csvContent = BOM + 'assignee,task,deadline,Status\r\n';
-        items.forEach(item => {
-          const row = [
-            `"${item.assignee.replace(/"/g, '""')}"`,
-            `"${item.task.replace(/"/g, '""')}"`,
-            `"${item.deadline.replace(/"/g, '""')}"`,
-            `"${item.status.replace(/"/g, '""')}"`
-          ].join(',');
-          csvContent += row + '\r\n';
-        });
-
-        // Trigger safe file download in browser
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        const timestamp = new Date().toISOString().slice(0, 10);
-        link.href = url;
-        link.setAttribute('download', `ScribeAI_Action_Items_${timestamp}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      });
-    }
 
     // Bind AI Suggestion click listeners for Difficulties
     const suggestButtons = summaryView.querySelectorAll('.scribe-btn-ai-suggest');
@@ -1785,7 +1760,7 @@ function exportSummaryAsHTML(summary) {
       }
 
       console.log('[Scribe GMeet] Caption container found. Attaching MutationObserver...');
-      appendLiveTranscript('✅ Đã kết nối với phụ đề Google Meet. Đang lắng nghe...');
+      appendLiveTranscript('✅ Đã kết nối với phụ đề Google Meet. Vui lòng mở subtitle của gg meet...');
 
       // Perform initial scan of existing captions already visible
       scanExistingCaptions(captionContainer);
@@ -1946,7 +1921,7 @@ function exportSummaryAsHTML(summary) {
       const captionContainer = document.querySelector('[data-tid="closed-caption-text"]')?.closest('.ui-box') || document.body;
 
       console.log('[Scribe Teams] Attaching MutationObserver...');
-      appendLiveTranscript('✅ Đã kết nối với phụ đề MS Teams. Đang lắng nghe...');
+      appendLiveTranscript('✅ Đã kết nối với phụ đề MS Teams. Vui lòng mở subtitle của ms teams...');
 
       scanExistingTeamsCaptions(captionContainer);
 

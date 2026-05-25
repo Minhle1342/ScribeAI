@@ -153,8 +153,9 @@
           <!-- File Upload Input -->
           <div class="input-group">
             <label for="sop-file-upload">Or Upload Document File</label>
-            <input type="file" id="sop-file-upload" accept=".txt, .md, .csv" style="width: 100%; font-size: 12px; color: var(--text-secondary);" />
-            <span class="help-text">Supported formats: .txt, .md, .csv</span>
+            <input type="file" id="sop-file-upload" accept=".txt, .md, .csv, .pdf" style="width: 100%; font-size: 12px; color: var(--text-secondary);" />
+            <span class="help-text">Supported formats: .txt, .md, .csv, .pdf (Max 30MB)</span>
+            <div id="sop-processing-status" class="help-text hidden" style="color: #60a5fa; font-weight: 500; margin-top: 8px; display: flex; align-items: center; gap: 6px;"></div>
           </div>
         </section>
 
@@ -167,6 +168,7 @@
       <div id="toast" class="toast hidden">Settings Saved Successfully!</div>
     </main>
   </div>
+  <script src="lib/pdf.min.js"></script>
   <script src="../services/db.js"></script>
   <script src="../services/geminiService.js"></script>
 

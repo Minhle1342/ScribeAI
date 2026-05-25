@@ -85,18 +85,21 @@ sequenceDiagram
 
 Tiện ích đã được nâng cấp mạnh mẽ với các tính năng cốt lõi vượt trội:
 
-### 1. Chế độ Thu Thập Phụ Đề Trực Tiếp ("Lấy theo Google Meet")
+### 1. Chế độ Thu Thập Phụ Đề Trực Tiếp ("Lấy theo Google Meet" & "Lấy theo Team microsoft")
 * **Không cần Audio input**: Hoạt động hoàn hảo mà không cần mở kết nối WebSocket STT hay thu âm hệ thống, tiết kiệm tối đa băng thông và tài nguyên CPU.
 * **Cơ chế Active Node Tracking**: Giải quyết triệt để lỗi "auto-correct" (Google STT liên tục thay đổi nội dung từ ngữ trong cùng một thẻ trước khi người nói dừng lại). ScribeAI gán nhãn duy nhất (`blockKey`) cho mỗi khối phát biểu, cho phép ghi đè in-place văn bản theo thời gian thực trực tiếp trên bảng điều khiển **Live logs** và IndexedDB/Local Storage.
+* **Hỗ trợ đa nền tảng**: Cho phép thu thập phụ đề trực tiếp từ cả **Google Meet** và **Microsoft Teams** bằng cách đọc cấu trúc DOM động thời gian thực của phụ đề và đẩy thẳng lên giao diện Live Logs.
 
 ### 2. Tự Động Kích Hoạt Phụ Đề Thông Minh (Agnostic CC Auto-Enabler)
 * **Vượt qua rào cản ngôn ngữ**: Không cần quan tâm người dùng thiết lập ngôn ngữ giao diện Google Meet là tiếng Việt ("Bật phụ đề"), tiếng Anh ("Turn on captions"), hay bất kỳ tiếng nào khác.
 * **SVG Icon Fingerprinting**: Hệ thống tự động quét bản đồ tọa độ SVG của nút Closed Caption chuẩn Material Design (`M19 4H5...`) trên thanh công cụ và mô phỏng sự kiện `.click()` để tự động kích hoạt phụ đề ngay khi người dùng bắt đầu ghi âm.
 
-### 3. Xuất Báo Cáo Công Việc sang Excel (Action Items Excel Export)
-* **Tích hợp nút "Xuất Excel"**: Xuất hiện trực quan ngay trong tab **AI Summary** tại phần báo cáo nhiệm vụ.
-* **Chuẩn hóa UTF-8 BOM**: Tự động chèn ký tự Byte Order Mark (`\uFEFF`) để đảm bảo các ký tự tiếng Việt có dấu được hiển thị hoàn hảo, không bao giờ bị lỗi font khi mở trực tiếp bằng Microsoft Excel.
-* **Báo cáo cấu trúc**: File xuất ra gồm 4 cột chuyên nghiệp: `assignee` (Người nhận việc), `task` (Nội dung công việc), `deadline` (Hạn chót), và cột chọn trạng thái `Status` (To Do, In Progress, Done).
+### 3. Kiến Trúc Tải SOP bằng Web Worker & Thuật toán Chia để trị (Enterprise PDF Knowledge Base Pipeline) ✨
+* **Hỗ trợ PDF đến 30MB**: Người dùng dễ dàng tải lên các tài liệu quy trình vận hành SOP dạng PDF kích thước lớn để làm cơ sở tri thức đối soát cho AI.
+* **Web Worker PDF Parsing**: Offload toàn bộ quá trình đọc luồng nhị phân, font mapping và xử lý C-Map phức tạp sang một luồng chạy ngầm riêng biệt của PDF.js Web Worker (`pdf.worker.min.js`), ngăn chặn tuyệt đối tình trạng tràn RAM hay treo giao diện (UI Freeze) của Chrome Extension.
+* **Tuân thủ Manifest V3 CSP**: Tích hợp trực tiếp các thư viện PDF.js ngoại tuyến và bật thiết lập `disableEval: true` để vượt qua hoàn toàn các chính sách bảo mật CSP nghiêm ngặt không sử dụng hàm eval/new Function.
+* **Thuật toán Semantic Boundary Backtracking**: Chia nhỏ các văn bản SOP khổng lồ thành các phân mảnh tối đa 50,000 ký tự, tự động tìm kiếm ranh giới đoạn văn (`\n\n`), câu dấu chấm (`. `) hoặc từ ngữ để cắt một cách tự nhiên và giữ trọn vẹn ngữ nghĩa của quy trình.
+* **Hàng đợi Xử lý Song song & Tự động Thử lại (Concurrency Queue with Exponential Backoff Retry)**: Giới hạn tối đa 3 luồng Gemini API song song để tối ưu hóa hiệu năng, đồng thời tự động bắt lỗi HTTP 429 (Rate Limit) để trì hoãn và thử lại tự động theo cấp số nhân (2s, 4s, 8s).
 
 ### 4. Ưu Tiên Phản Hồi Tiếng Việt (Vietnamese-First JSON Schema)
 * Cấu trúc Prompt hệ thống ép buộc Gemini trả về định dạng JSON thuần Việt 100% giúp báo cáo tổng kết cuộc họp đạt độ tự nhiên cao, mạch lạc và sát nghĩa nhất với văn hóa hội họp tại Việt Nam.
@@ -199,5 +202,4 @@ Không cần phải mở terminal thủ công và gõ các lệnh phức tạp, 
 4. **Tóm tắt & Xuất báo cáo**:
    * Bấm **Stop & Summary** khi cuộc họp kết thúc.
    * Tiện ích sẽ đóng offscreen/observer, kích hoạt luồng AI Rolling Summary của Gemini và tự động chuyển sang tab **AI Summary**.
-   * Đọc báo cáo tóm tắt cuộc họp và bấm nút **Xuất Excel** để lưu danh sách Task & Action Items về máy tính định dạng `.csv` siêu mượt!
-
+   * Đọc báo cáo tóm tắt cuộc họp và dễ dàng khai thác các khó khăn, đề xuất giải pháp đối chiếu trực tiếp với cơ sở tri thức quy trình SOP đã thiết lập.

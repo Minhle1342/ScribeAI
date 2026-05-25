@@ -345,31 +345,377 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- PDF Text Extraction via Native PDF.js Worker ---
+  async function parsePdfText(arrayBuffer) {
+    const statusDiv = document.getElementById('sop-processing-status');
+    
+    // Configure PDF.js to use the packaged local worker minified script
+    pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('popup/lib/pdf.worker.min.js');
+    
+    const loadingTask = pdfjsLib.getDocument({
+      data: arrayBuffer,
+      disableEval: true, // Securely runs in Chrome Extension MV3 context without sandbox
+      useSystemFonts: true
+    });
+    
+    const pdf = await loadingTask.promise;
+    const numPages = pdf.numPages;
+    let fullText = '';
+    
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      if (statusDiv) {
+        const progress = Math.round((pageNum / numPages) * 100);
+        statusDiv.classList.remove('hidden');
+        statusDiv.style.color = '#60a5fa';
+        statusDiv.innerHTML = `
+          <span style="animation: scribe-float 1.5s ease-in-out infinite;">📂</span>
+          <span>Extracting: Page ${pageNum}/${numPages} (${progress}%)</span>
+        `;
+      }
+      
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map(item => item.str)
+        .join(' ')
+        .replace(/\s+/g, ' '); // Clean excessive whitespaces
+        
+      fullText += pageText + '\n\n';
+    }
+    
+    return fullText.trim();
+  }
+
+  // --- Semantic Boundary Backtracking Chunking Algorithm ---
+  function semanticChunkText(text, maxChunkSize = 50000, fallbackTolerance = 15000) {
+    const chunks = [];
+    let index = 0;
+    const totalLength = text.length;
+
+    while (index < totalLength) {
+      if (totalLength - index <= maxChunkSize) {
+        chunks.push(text.substring(index).trim());
+        break;
+      }
+
+      let endPosition = index + maxChunkSize;
+      let chosenCut = -1;
+
+      // Backtracking boundary search range
+      const minPosition = Math.max(index, endPosition - fallbackTolerance);
+      const searchBlock = text.substring(minPosition, endPosition);
+
+      // 1. Try paragraph break (\n\n)
+      const lastParagraphBreak = searchBlock.lastIndexOf('\n\n');
+      if (lastParagraphBreak !== -1) {
+        chosenCut = minPosition + lastParagraphBreak + 2;
+      } else {
+        // 2. Try sentence boundary (. / ? / ! followed by space)
+        const sentenceRegex = /[.!?]\s+/g;
+        let match;
+        let lastSentenceBoundary = -1;
+        while ((match = sentenceRegex.exec(searchBlock)) !== null) {
+          lastSentenceBoundary = match.index + match[0].length;
+        }
+        
+        if (lastSentenceBoundary !== -1) {
+          chosenCut = minPosition + lastSentenceBoundary;
+        } else {
+          // 3. Try word boundary (space)
+          const lastSpace = searchBlock.lastIndexOf(' ');
+          if (lastSpace !== -1) {
+            chosenCut = minPosition + lastSpace + 1;
+          } else {
+            // 4. Force slice fallback
+            chosenCut = endPosition;
+          }
+        }
+      }
+
+      chunks.push(text.substring(index, chosenCut).trim());
+      index = chosenCut;
+    }
+
+    return chunks;
+  }
+
+  // --- Concurrency Queue with Exponential Backoff Retry ---
+  class ConcurrencyQueue {
+    constructor(maxConcurrency = 3, maxRetries = 3, initialDelayMs = 2000) {
+      this.maxConcurrency = maxConcurrency;
+      this.maxRetries = maxRetries;
+      this.initialDelayMs = initialDelayMs;
+    }
+
+    async run(tasks, progressCallback) {
+      let activeTasks = 0;
+      let taskIndex = 0;
+      let completedTasks = 0;
+      const totalTasks = tasks.length;
+      const results = new Array(totalTasks);
+
+      return new Promise((resolve, reject) => {
+        const next = () => {
+          if (taskIndex >= totalTasks && activeTasks === 0) {
+            return resolve(results);
+          }
+
+          while (activeTasks < this.maxConcurrency && taskIndex < totalTasks) {
+            const currentIdx = taskIndex++;
+            activeTasks++;
+            
+            this.executeWithRetry(tasks[currentIdx], 0)
+              .then(res => {
+                results[currentIdx] = res;
+                activeTasks--;
+                completedTasks++;
+                
+                if (progressCallback) {
+                  progressCallback(completedTasks, totalTasks);
+                }
+                
+                next();
+              })
+              .catch(err => {
+                activeTasks--;
+                reject(err);
+              });
+          }
+        };
+
+        next();
+      });
+    }
+
+    async executeWithRetry(taskFn, attempt = 0) {
+      try {
+        return await taskFn();
+      } catch (err) {
+        const isRateLimit = err.status === 429 || 
+                            (err.message && err.message.includes('429')) || 
+                            (err.message && err.message.toLowerCase().includes('too many requests')) ||
+                            (err.message && err.message.toLowerCase().includes('resource exhausted'));
+        
+        if (isRateLimit && attempt < this.maxRetries) {
+          const delay = this.initialDelayMs * Math.pow(2, attempt);
+          console.warn(`[Concurrency Queue] HTTP 429 rate limit encountered. Retrying task (attempt ${attempt + 1}/${this.maxRetries}) in ${delay}ms...`);
+          await new Promise(res => setTimeout(res, delay));
+          return this.executeWithRetry(taskFn, attempt + 1);
+        }
+        throw err;
+      }
+    }
+  }
+
+  // --- Refactored Divide and Conquer Large Document Analysis ---
+  async function runDivideAndConquerSop(sopText) {
+    const statusDiv = document.getElementById('sop-processing-status');
+    if (statusDiv) {
+      statusDiv.classList.remove('hidden');
+      statusDiv.style.color = '#60a5fa';
+      statusDiv.innerHTML = `
+        <span style="animation: scribe-float 1.5s ease-in-out infinite;">⚡</span>
+        <span>Analyzing document structure & compiling semantic boundary chunks...</span>
+      `;
+    }
+
+    try {
+      const apiKey = await window.geminiService.getSavedApiKey();
+      
+      // Split into boundary-respecting chunks
+      const chunks = semanticChunkText(sopText, 50000, 15000);
+      const totalChunks = chunks.length;
+      console.log(`[Divide and Conquer] Generated ${totalChunks} semantic boundary chunks.`);
+
+      if (statusDiv) {
+        statusDiv.innerHTML = `
+          <span style="animation: scribe-float 1.5s ease-in-out infinite;">⚙️</span>
+          <span>Preparing ${totalChunks} parallel Gemini analyses...</span>
+        `;
+      }
+
+      // Convert chunks into lazy executable tasks
+      const tasks = chunks.map((chunkText, i) => {
+        return async () => {
+          const chunkPrompt = `Bạn là một chuyên gia phân tích quy trình nghiệp vụ cấp cao.
+Dưới đây là phần ${i + 1}/${totalChunks} của tài liệu lớn được phân nhỏ theo thuật toán Chia để trị (Divide and Conquer). 
+Nhiệm vụ của bạn là hãy phân tích và trích xuất chi tiết tất cả các hướng dẫn, quy định, quy trình và bước thực hiện quan trọng được đề cập trong phần này.
+Vui lòng trình bày rõ ràng, chi tiết và súc tích để phục vụ cho việc hợp nhất toàn bộ tài liệu sau này.
+
+[PHẦN TÀI LIỆU CẦN PHÂN TÍCH]
+${chunkText}
+`;
+          return await window.geminiService.callGeminiApi(apiKey, chunkPrompt, false);
+        };
+      });
+
+      // Instantiate local concurrent queue (max 3 concurrent jobs, 3 retries)
+      const queue = new ConcurrencyQueue(3, 3, 2000);
+      
+      const intermediateSummaries = await queue.run(tasks, (completed, total) => {
+        if (statusDiv) {
+          statusDiv.innerHTML = `
+            <span style="animation: scribe-float 1.5s ease-in-out infinite;">⚙️</span>
+            <span>Analyzing chunks: ${completed}/${total} completed...</span>
+          `;
+        }
+      });
+
+      // Conquering phase: merge and consolidate
+      if (statusDiv) {
+        statusDiv.innerHTML = `
+          <span style="animation: scribe-float 1.5s ease-in-out infinite;">🧬</span>
+          <span>Consolidating summaries into final SOP standard...</span>
+        `;
+      }
+
+      const consolidationPrompt = `Bạn là chuyên gia thiết lập tài liệu Quy trình vận hành tiêu chuẩn (SOP - Standard Operating Procedure) chuyên nghiệp.
+Dưới đây là các phần tóm tắt quy trình được trích xuất từ một tài liệu lớn sử dụng thuật toán Chia để trị (Divide and Conquer).
+
+Nhiệm vụ của bạn là:
+1. Hợp nhất tất cả các phần tóm tắt quy trình ở trên thành một tài liệu quy trình vận hành chuẩn (SOP) hoàn chỉnh, có cấu trúc logic cực kỳ chặt chẽ.
+2. Loại bỏ hoàn toàn các thông tin trùng lặp hoặc mâu thuẫn giữa các phần.
+3. Trình bày tài liệu bằng Tiếng Việt (hoặc Tiếng Anh nếu toàn bộ dữ liệu gốc là Tiếng Anh) một cách chuyên nghiệp, sử dụng Markdown với các tiêu đề rõ ràng (H1, H2, H3), danh sách gạch đầu dòng chi tiết.
+4. Đảm bảo giữ lại đầy đủ các bước kỹ thuật, hướng dẫn tác nghiệp và quy định cốt lõi.
+
+[CÁC TÓM TẮT THÀNH PHẦN]
+${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
+
+[TÀI LIỆU SOP CUỐI CÙNG]
+`;
+
+      const finalConsolidatedSop = await window.geminiService.callGeminiApi(apiKey, consolidationPrompt, false);
+
+      if (statusDiv) {
+        statusDiv.style.color = '#34d399';
+        statusDiv.innerHTML = `✅ Knowledge Base compiled & consolidated successfully!`;
+        setTimeout(() => statusDiv.classList.add('hidden'), 5000);
+      }
+
+      return finalConsolidatedSop.trim();
+
+    } catch (err) {
+      console.error('[Divide and Conquer Error]', err);
+      if (statusDiv) {
+        statusDiv.style.color = '#f87171';
+        statusDiv.innerHTML = `❌ Error: ${err.message}`;
+      }
+      throw err;
+    }
+  }
+
   // SOP Save Action
   if (saveSopBtn) {
-    saveSopBtn.addEventListener('click', () => {
+    saveSopBtn.addEventListener('click', async () => {
       const text = sopRawText.value.trim();
       const file = sopFileUpload.files[0];
+      const statusDiv = document.getElementById('sop-processing-status');
+
+      // Size constraints check: maximum 30MB
+      const maxFileSize = 30 * 1024 * 1024; // 30 Megabytes
 
       if (file) {
+        if (file.size > maxFileSize) {
+          showToast('Error: File size exceeds the maximum limit of 30MB.', true);
+          return;
+        }
+
+        saveSopBtn.disabled = true;
+        saveSopBtn.textContent = 'Processing Document...';
+
         const reader = new FileReader();
-        reader.onload = (e) => {
-          const fileText = e.target.result;
-          chrome.storage.local.set({ sopRawText: fileText }, () => {
-            if (sopRawText) sopRawText.value = fileText;
-            showToast('Document uploaded and saved successfully!');
-            console.log('Saved uploaded document as raw SOP text.');
-          });
+        const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
+
+        reader.onload = async (e) => {
+          try {
+            let extractedText = '';
+
+            if (isPdf) {
+              if (statusDiv) {
+                statusDiv.classList.remove('hidden');
+                statusDiv.style.color = '#60a5fa';
+                statusDiv.innerHTML = `
+                  <span style="animation: scribe-float 1.5s ease-in-out infinite;">📂</span>
+                  <span>Extracting text from PDF via Web Worker...</span>
+                `;
+              }
+              extractedText = await parsePdfText(e.target.result);
+              if (!extractedText) {
+                throw new Error('Could not extract any plain text from the PDF document.');
+              }
+            } else {
+              extractedText = e.target.result;
+            }
+
+            // Run Divide and Conquer if extracted text is massive (> 50,000 characters)
+            let processedText = extractedText;
+            if (extractedText.length > 50000) {
+              processedText = await runDivideAndConquerSop(extractedText);
+            }
+
+            chrome.storage.local.set({ sopRawText: processedText }, () => {
+              if (sopRawText) sopRawText.value = processedText;
+              showToast('Document uploaded and saved successfully!');
+              console.log('Saved uploaded document as raw SOP text.');
+              
+              // Clear file input
+              sopFileUpload.value = '';
+              
+              saveSopBtn.disabled = false;
+              saveSopBtn.textContent = 'Save to Knowledge Base';
+            });
+
+          } catch (err) {
+            console.error('[Document processing failed]', err);
+            showToast('Processing failed: ' + err.message, true);
+            saveSopBtn.disabled = false;
+            saveSopBtn.textContent = 'Save to Knowledge Base';
+            if (statusDiv) {
+              statusDiv.style.color = '#f87171';
+              statusDiv.innerHTML = `❌ Processing failed: ${err.message}`;
+            }
+          }
         };
+
         reader.onerror = () => {
           showToast('Error reading uploaded file.', true);
+          saveSopBtn.disabled = false;
+          saveSopBtn.textContent = 'Save to Knowledge Base';
         };
-        reader.readAsText(file);
+
+        if (isPdf) {
+          reader.readAsArrayBuffer(file);
+        } else {
+          reader.readAsText(file);
+        }
+
       } else {
-        chrome.storage.local.set({ sopRawText: text }, () => {
-          showToast('SOP text saved successfully!');
-          console.log('Saved raw SOP text configuration.');
-        });
+        if (!text) {
+          showToast('Error: Please enter text or upload a file.', true);
+          return;
+        }
+
+        saveSopBtn.disabled = true;
+        saveSopBtn.textContent = 'Saving...';
+
+        try {
+          let processedText = text;
+          if (text.length > 50000) {
+            processedText = await runDivideAndConquerSop(text);
+          }
+
+          chrome.storage.local.set({ sopRawText: processedText }, () => {
+            if (sopRawText) sopRawText.value = processedText;
+            showToast('SOP text saved successfully!');
+            console.log('Saved raw SOP text configuration.');
+            saveSopBtn.disabled = false;
+            saveSopBtn.textContent = 'Save to Knowledge Base';
+          });
+        } catch (err) {
+          showToast('Failed to save: ' + err.message, true);
+          saveSopBtn.disabled = false;
+          saveSopBtn.textContent = 'Save to Knowledge Base';
+        }
       }
     });
   }
@@ -473,3 +819,50 @@ document.addEventListener('DOMContentLoaded', () => {
     return p;
   }
 });
+
+// Hàm xin quyền Micro từ giao diện Popup
+async function checkAndRequestMicrophonePermission() {
+  try {
+    // Ép Chrome hiện hộp thoại xin quyền Micro ở góc trái màn hình
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    
+    // Nếu người dùng bấm "Allow", quyền đã được cấp. 
+    // Ta phải tắt ngay luồng âm thanh ở Popup đi, để nhường lại cho Offscreen dùng.
+    stream.getTracks().forEach(track => track.stop());
+    
+    // Ẩn bảng cảnh báo (nếu đang hiện)
+    document.getElementById('mic-permission-card').classList.add('hidden');
+    return true; // Trả về true để cho phép chạy bước tiếp theo (gửi tin nhắn cho Offscreen)
+
+  } catch (error) {
+    console.error("Chi tiết lỗi quyền Micro:", error);
+    
+    // Nếu lỗi là NotAllowedError (Người dùng bấm Block hoặc Hệ thống chặn)
+    if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+      // Hiển thị thẻ cảnh báo lỗi màu vàng trong popup.html của bạn
+      const warningCard = document.getElementById('mic-permission-card');
+      warningCard.classList.remove('hidden');
+      
+      // Sửa text hướng dẫn cụ thể thay vì bảo "click address bar"
+      document.getElementById('mic-permission-desc').innerText = 
+        "Chrome đã chặn quyền Micro. Vui lòng bấm nút bên dưới để mở cài đặt và chọn Allow (Cho phép).";
+      
+      // Cập nhật hành động cho nút bấm để mở trang cài đặt Extension
+      document.getElementById('btn-grant-mic').onclick = () => {
+        chrome.tabs.create({ url: 'chrome://settings/content/siteDetails?site=chrome-extension://' + chrome.runtime.id });
+      };
+    }
+    
+    return false; // Trả về false để chặn luồng, không gọi Offscreen nữa
+  }
+}
+
+// CÁCH SỬ DỤNG KHI BẤM NÚT START RECORDING:
+// document.getElementById('start-btn').addEventListener('click', async () => {
+//    const isPermitted = await checkAndRequestMicrophonePermission();
+//    if (isPermitted) {
+//        // Bắt đầu gửi tin nhắn START_RECORDING cho Background -> Offscreen
+//        chrome.runtime.sendMessage({ action: "START_RECORDING" });
+//    }
+// });
+

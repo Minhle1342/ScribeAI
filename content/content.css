@@ -939,6 +939,63 @@
   animation: scribe-pulse-dot 2s infinite;
 }
 
+/* Microphone Permission Warning Card */
+.scribe-mic-warning-card {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 12px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+  animation: scribe-float-fade-in 0.3s ease-out;
+}
+
+.scribe-mic-warning-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.scribe-mic-warning-icon {
+  font-size: 18px;
+  animation: scribe-float 3s ease-in-out infinite;
+}
+
+.scribe-mic-warning-title {
+  font-weight: 700;
+  color: #fca5a5;
+  font-size: 13px;
+  letter-spacing: -0.2px;
+}
+
+.scribe-mic-warning-desc {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #e2e8f0;
+  margin: 0 0 12px 0;
+}
+
+.scribe-mic-warning-footer {
+  font-size: 11px;
+  color: #94a3b8;
+  border-top: 1px dashed rgba(255, 255, 255, 0.10);
+  padding-top: 8px;
+}
+
+@keyframes scribe-float-fade-in {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 
 
 

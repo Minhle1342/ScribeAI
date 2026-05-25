@@ -8,8 +8,7 @@
     "activeTab",
     "tabCapture",
     "offscreen",
-    "alarms",
-    "microphone"
+    "alarms"
   ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",

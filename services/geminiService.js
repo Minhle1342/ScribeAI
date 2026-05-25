@@ -548,7 +548,8 @@ if (typeof module !== 'undefined' && module.exports) {
     splitTranscriptIntoChunks,
     isValidSummarySchema,
     chatWithMeeting,
-    solveDifficultyWithSop
+    solveDifficultyWithSop,
+    callGeminiApi
   };
 } else {
   // Bind to global scope (window or self) for content scripts or background service workers
@@ -560,6 +561,7 @@ if (typeof module !== 'undefined' && module.exports) {
     splitTranscriptIntoChunks,
     isValidSummarySchema,
     chatWithMeeting,
-    solveDifficultyWithSop
+    solveDifficultyWithSop,
+    callGeminiApi
   };
 }
