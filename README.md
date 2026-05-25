@@ -125,22 +125,6 @@ Tiện ích đã được nâng cấp mạnh mẽ với các tính năng cốt l
   * **Grounding Tuyệt đối**: Nếu không có giải pháp trong SOP, hệ thống phản hồi chính xác `"Not found in provided SOP documents."`, triệt tiêu hoàn toàn khả năng AI tự bịa đặt giải pháp.
   * **Trích dẫn Minh bạch**: Đối với các giải pháp hợp lệ, Gemini bắt buộc phải trích xuất và trả về **nguyên văn đoạn câu văn quy trình thực tế** từ tệp SOP để làm bằng chứng xác thực (`citation`), hiển thị trực quan dưới dạng hộp trích dẫn viền nét đứt xanh lá cây bắt mắt.
 
-### 7. Tạm Dừng & Tiếp Tục Thu Âm Thông Minh (Pause & Resume) ⏸️
-* **Kiểm soát linh hoạt cuộc họp**: Thêm nút tạm dừng (Pause) chuyên dụng khi đang ghi âm cho cả 2 nguồn: ghi âm qua WebSocket STT và lấy phụ đề từ Google Meet.
-* **Nguyên lý hoạt động**:
-  * Khi người dùng nhấn nút Tạm Dừng (⏸️), trạng thái cuộc họp chuyển thành `PAUSED`.
-  * **Chế độ WebSocket (Audio capture)**: Tạm dừng gửi các gói nhị phân audio chunks lên server STT để tiết kiệm băng thông và bảo vệ quyền riêng tư khi thảo luận nội bộ ngoài lề.
-  * **Chế độ Lấy phụ đề (Google Meet)**: Tự động bỏ qua việc quét và lưu trữ các Closed Caption mới trên DOM.
-  * Khi nhấn Tiếp Tục (Resume), hệ thống khôi phục trạng thái hoạt động bình thường tức thì và tiếp tục nối tiếp hội thoại một cách liền mạch.
-
-### 8. Xuất Nhật Ký Trực Tiếp Đa Định Dạng (Multi-Format Live Logs Export) 📤
-* **Xuất trực tiếp ngay trong tab Live logs**: Tích hợp các nút xuất dữ liệu sang các tệp tin phổ biến bao gồm `.txt`, `.pdf`, `.docx`, `.doc` trực tiếp bên dưới bảng điều khiển Live logs.
-* **Tự động hóa hiển thị thông minh**: Hàng nút xuất file sẽ tự động ẩn đi khi nhật ký trống và chỉ hiển thị khi có ít nhất một dòng log xuất hiện, đảm bảo giao diện tinh gọn, sạch sẽ.
-* **Định dạng tối ưu**:
-  * **`.txt`**: Định dạng văn bản thuần UTF-8 rõ ràng.
-  * **`.doc`/`.docx`**: Định dạng Rich HTML chất lượng cao tương thích tốt với Microsoft Word, giữ nguyên cấu trúc font chữ, màu sắc và tiêu đề đẹp mắt.
-  * **`.pdf`**: Bản in sạch sẽ và tối giản qua cửa sổ in chuyên dụng của trình duyệt Chrome.
-
 ```mermaid
 graph TD
     subgraph Micro-MRP SOP Grounding Pipeline
@@ -157,6 +141,18 @@ graph TD
         I -->|Hiển thị UI| K[Thông báo dạng nghiêng xám]
     end
 ```
+
+### 7. Tạm Dừng Ghi Âm & Menu Xuất Báo Cáo Nhanh (Pause Recording & Quick Export) ⏸️📥
+* **Tính năng Tạm dừng thông minh (Graceful Pause)**:
+  * Cho phép người dùng tạm thời dừng ghi âm bất kỳ lúc nào bằng cách nhấp vào nút **Tạm dừng (⏸️)** được tích hợp trực tiếp trên thanh công cụ của bảng điều khiển Scribe AI nổi hoặc từ giao diện Popup của Chrome Extension.
+  * Khi ở trạng thái `PAUSED`, hệ thống sẽ tắt tạm thời việc cập nhật/ghi đè phụ đề trên Live Logs và IndexedDB, đồng thời Offscreen Document sẽ tự động dừng chuyển âm thanh nhị phân lên WebSocket server để tiết kiệm tối đa băng thông mạng và tài nguyên CPU của máy khách.
+  * Cho phép tiếp tục ghi âm dễ dàng bằng cách bấm nút **Tiếp tục (▶️)** hoặc nút **Bắt đầu Ghi**.
+* **Menu Xuất dữ liệu nhanh (Quick Export Menu)**:
+  * Xuất hiện tinh tế ở góc phải phía trên của khung văn bản Live Logs **chỉ khi ghi âm đang được tạm dừng**.
+  * Hỗ trợ xuất trực tiếp không phụ thuộc bất kỳ thư viện NPM bên thứ ba nào (Vanilla JS 100%) sang 3 định dạng phổ biến:
+    1. **Plain Text (.txt)**: Sử dụng standard `Blob` với MIME type `text/plain` tải xuống tệp nhật ký cuộc họp thô có định dạng phân chia rõ ràng mốc thời gian và tên người phát biểu.
+    2. **Microsoft Word (.doc)**: Bọc cấu trúc HTML hoàn chỉnh chứa thẻ khai báo định dạng MS Word chuẩn (`xmlns:o="urn:schemas-microsoft-com:office:office"...`) và nhúng font chữ cao cấp Outfit để người dùng mở trực tiếp bằng MS Word với giao diện thiết kế chuyên nghiệp, đẹp mắt.
+    3. **Print PDF (.pdf)**: Tạo một thẻ ẩn `iframe` độc lập và cách ly CSS, clone toàn bộ transcript với font Outfit và áp dụng kiểu in chuẩn của CSS trước khi gọi lệnh `window.print()` giúp người dùng có thể in trực tiếp ra tệp PDF cực kỳ đẹp và không bị ảnh hưởng bởi CSS của trang web hiện tại.
 
 ---
 

@@ -273,6 +273,10 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDetail.textContent = 'Streaming captured audio to STT server...';
         resetBtn.disabled = true;
         break;
+      case 'PAUSED':
+        statusDetail.textContent = 'Recording is paused. Capturing is temporarily suspended.';
+        resetBtn.disabled = true;
+        break;
       case 'SUMMARIZING':
         statusDetail.textContent = 'Synthesizing rolling summaries in Gemini API...';
         resetBtn.disabled = true;

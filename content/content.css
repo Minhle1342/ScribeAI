@@ -847,63 +847,98 @@
   to { opacity: 1; transform: scale(1); }
 }
 
-/* Pause Button and Export Controls styles */
-.scribe-btn-pause {
-  background: rgba(245, 158, 11, 0.15);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  color: #fcd34d;
+/* Pause State styles & Quick Export UI */
+#scribe-panel-transcript {
+  position: relative;
 }
 
-.scribe-btn-pause:hover:not(:disabled) {
-  background: rgba(245, 158, 11, 0.25);
-  transform: translateY(-1px);
+.scribe-export-container {
+  position: absolute;
+  top: 12px;
+  right: 20px;
+  z-index: 100;
+  display: inline-block;
 }
 
-.scribe-export-logs-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.1);
-}
-
-.scribe-export-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: #a49fc6;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.scribe-export-buttons {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.scribe-export-log-btn {
-  flex: 1;
-  min-width: 60px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.scribe-export-trigger {
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  color: #e9d5ff;
   border-radius: 8px;
-  color: #d1cde6;
-  font-size: 12px;
+  padding: 6px 12px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 6px;
   transition: all 0.2s ease;
+  backdrop-filter: blur(8px);
 }
 
-.scribe-export-log-btn:hover {
-  background: rgba(139, 92, 246, 0.2);
-  border-color: rgba(139, 92, 246, 0.4);
+.scribe-export-trigger:hover {
+  background: rgba(168, 85, 247, 0.25);
+  border-color: rgba(168, 85, 247, 0.5);
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.2);
+}
+
+.scribe-export-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: rgba(18, 14, 36, 0.95);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  min-width: 110px;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 110;
+  backdrop-filter: blur(12px);
+}
+
+.scribe-export-menu.show {
+  display: flex;
+}
+
+.scribe-export-item {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: #e2def2;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+  outline: none;
+  text-align: left;
+  display: block;
+  width: 100%;
+}
+
+.scribe-export-item:hover {
+  background: rgba(168, 85, 247, 0.2);
   color: #ffffff;
 }
+
+/* Pause/Resume buttons styles */
+.scribe-btn-pause {
+  background: rgba(234, 179, 8, 0.15) !important;
+  border: 1px solid rgba(234, 179, 8, 0.35) !important;
+  color: #fef08a !important;
+}
+
+.scribe-btn-pause:hover {
+  background: rgba(234, 179, 8, 0.25) !important;
+  border-color: rgba(234, 179, 8, 0.5) !important;
+  box-shadow: 0 0 10px rgba(234, 179, 8, 0.2) !important;
+}
+
+.scribe-status-badge.paused::before {
+  background: #f59e0b;
+  animation: scribe-pulse-dot 2s infinite;
+}
+
+
 
 

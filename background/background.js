@@ -67,48 +67,116 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // 1. Trigger Recording Start
   if (message.action === 'START_RECORDING_REQUEST') {
-    const tabId = sender.tab ? sender.tab.id : null;
-    if (!tabId) {
-      sendResponse({ success: false, error: 'Recording must be triggered from a GMeet/Teams meeting tab.' });
-      return;
-    }
+    chrome.storage.local.get(['recordingState'], async (data) => {
+      if (data.recordingState === 'PAUSED') {
+        // Resume!
+        try {
+          const currentMode = (await chrome.storage.local.get(['captureMode'])).captureMode || 'websocket';
+          if (currentMode === 'websocket') {
+            await chrome.runtime.sendMessage({
+              target: 'offscreen',
+              action: 'SET_PAUSE_STATE',
+              isPaused: false
+            });
+          }
+          updateGlobalState('RECORDING');
+          sendResponse({ success: true });
+        } catch (err) {
+          sendResponse({ success: false, error: err.message });
+        }
+        return;
+      }
 
-    activeRecordingTabId = tabId;
-    chrome.storage.local.get(['websocketUrl'], async (storageData) => {
-      const wsUrl = storageData.websocketUrl || 'ws://localhost:8080/stt';
+      // Normal Start
+      const tabId = sender.tab ? sender.tab.id : null;
+      if (!tabId) {
+        sendResponse({ success: false, error: 'Recording must be triggered from a GMeet/Teams meeting tab.' });
+        return;
+      }
+
+      activeRecordingTabId = tabId;
+      chrome.storage.local.get(['websocketUrl'], async (storageData) => {
+        const wsUrl = storageData.websocketUrl || 'ws://localhost:8080/stt';
+        try {
+          await startMeetingRecording(tabId, wsUrl);
+          sendResponse({ success: true });
+        } catch (err) {
+          console.error('Failed to start recording workflow:', err);
+          sendResponse({ success: false, error: err.message });
+        }
+      });
+    });
+    return true; // Keep response channel open async
+  }
+
+  // 1b. Toggle Pause/Resume Recording
+  if (message.action === 'TOGGLE_PAUSE_REQUEST') {
+    chrome.storage.local.get(['recordingState'], async (storageData) => {
+      const currentState = storageData.recordingState || 'IDLE';
+      let nextState;
+      let isPaused;
+      if (currentState === 'RECORDING') {
+        nextState = 'PAUSED';
+        isPaused = true;
+      } else if (currentState === 'PAUSED') {
+        nextState = 'RECORDING';
+        isPaused = false;
+      } else {
+        sendResponse({ success: false, error: 'Cannot toggle pause when not recording.' });
+        return;
+      }
+
       try {
-        await startMeetingRecording(tabId, wsUrl);
-        sendResponse({ success: true });
+        const currentMode = (await chrome.storage.local.get(['captureMode'])).captureMode || 'websocket';
+        if (currentMode === 'websocket') {
+          // Send to offscreen
+          await chrome.runtime.sendMessage({
+            target: 'offscreen',
+            action: 'SET_PAUSE_STATE',
+            isPaused: isPaused
+          });
+        }
+        updateGlobalState(nextState);
+        sendResponse({ success: true, state: nextState });
       } catch (err) {
-        console.error('Failed to start recording workflow:', err);
+        console.error('Failed to toggle pause:', err);
         sendResponse({ success: false, error: err.message });
       }
     });
     return true; // Keep response channel open async
   }
 
+  // 1c. Trigger Recording Start for GMeet Mode
+  if (message.action === 'START_GMEET_RECORDING') {
+    activeRecordingTabId = sender.tab ? sender.tab.id : null;
+    updateGlobalState('RECORDING');
+    sendResponse({ success: true });
+    return false;
+  }
+
   // 2. Trigger Recording Stop & Auto Summarize
   if (message.action === 'STOP_RECORDING_REQUEST') {
-    const isFromContentScript = sender.tab != null;
-
-    if (isFromContentScript && !activeRecordingTabId) {
-      // GMeet mode: content script is stopping, no offscreen was started
+    if (sender.tab && !activeRecordingTabId) {
       activeRecordingTabId = sender.tab.id;
     }
 
-    // If source is content script (GMeet mode), skip offscreen teardown, just summarize
-    if (isFromContentScript) {
-      stopKeepAliveHeartbeat();
-      updateGlobalState('SUMMARIZING');
-      triggerSummarizationWorkflow()
-        .then(() => sendResponse({ success: true }))
-        .catch((err) => sendResponse({ success: false, error: err.message }));
-    } else {
-      // Normal WebSocket mode: stop offscreen then summarize
-      stopMeetingRecording()
-        .then(() => sendResponse({ success: true }))
-        .catch((err) => sendResponse({ success: false, error: err.message }));
-    }
+    chrome.storage.local.get(['captureMode'], async (storageMode) => {
+      const currentMode = storageMode.captureMode || 'websocket';
+      
+      if (currentMode === 'gmeet') {
+        // GMeet mode: just summarize
+        stopKeepAliveHeartbeat();
+        updateGlobalState('SUMMARIZING');
+        triggerSummarizationWorkflow()
+          .then(() => sendResponse({ success: true }))
+          .catch((err) => sendResponse({ success: false, error: err.message }));
+      } else {
+        // Normal WebSocket mode: stop offscreen then summarize
+        stopMeetingRecording()
+          .then(() => sendResponse({ success: true }))
+          .catch((err) => sendResponse({ success: false, error: err.message }));
+      }
+    });
     return true;
   }
 
@@ -152,56 +220,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // 4d. Pause Recording
-  if (message.action === 'PAUSE_RECORDING_REQUEST') {
-    (async () => {
-      try {
-        const storageMode = await chrome.storage.local.get(['captureMode']);
-        const currentMode = storageMode.captureMode || 'websocket';
-        if (currentMode === 'websocket') {
-          await chrome.runtime.sendMessage({
-            target: 'offscreen',
-            action: 'PAUSE_RECORDING'
-          }).catch((err) => console.warn('Offscreen not active or did not respond:', err));
-        } else {
-          // GMeet mode, just transition the state
-          updateGlobalState('PAUSED');
-        }
-        sendResponse({ success: true });
-      } catch (err) {
-        console.error('Failed to pause recording:', err);
-        sendResponse({ success: false, error: err.message });
-      }
-    })();
-    return true;
-  }
-
-  // 4e. Resume Recording
-  if (message.action === 'RESUME_RECORDING_REQUEST') {
-    (async () => {
-      try {
-        const storageMode = await chrome.storage.local.get(['captureMode']);
-        const currentMode = storageMode.captureMode || 'websocket';
-        if (currentMode === 'websocket') {
-          await chrome.runtime.sendMessage({
-            target: 'offscreen',
-            action: 'RESUME_RECORDING'
-          }).catch((err) => console.warn('Offscreen not active or did not respond:', err));
-        } else {
-          // GMeet mode, just transition the state
-          updateGlobalState('RECORDING');
-        }
-        sendResponse({ success: true });
-      } catch (err) {
-        console.error('Failed to resume recording:', err);
-        sendResponse({ success: false, error: err.message });
-      }
-    })();
-    return true;
-  }
-
   // 4c. Handle Google Meet caption updates in-place
   if (message.action === 'UPDATE_GMEET_CAPTION') {
+    if (currentRecordingState === 'PAUSED') return false;
     chrome.storage.local.get(['gmeetCaptions'], (data) => {
       const gmeetCaptions = data.gmeetCaptions || {};
       gmeetCaptions[message.blockKey] = {
@@ -217,6 +238,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // 5. Pipe Live Transcripts from Offscreen to Content Script
   //    OR save captions from Content Script (GMeet mode) to IndexedDB
   if (message.action === 'TRANSCRIPT_APPENDED') {
+    if (currentRecordingState === 'PAUSED') {
+      sendResponse({ success: false, error: 'Recording is paused.' });
+      return;
+    }
     const isFromContentScript = sender.tab != null;
 
     if (isFromContentScript) {
