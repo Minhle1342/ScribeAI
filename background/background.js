@@ -648,6 +648,13 @@ async function triggerSummarizationWorkflow() {
 async function resetSession() {
   stopKeepAliveHeartbeat();
   await clearTranscriptDatabase();
+  try {
+    if (typeof clearChatHistory === 'function') {
+      await clearChatHistory();
+    }
+  } catch (err) {
+    console.error('Failed to clear chat history:', err);
+  }
   await new Promise((resolve) => {
     chrome.storage.local.set({
       finalSummary: null,

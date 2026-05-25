@@ -163,7 +163,20 @@ async function callGeminiApi(apiKey, promptText, enforceJson = true) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const payload = {
-    contents: [
+    generationConfig: {
+      temperature: 0.2, // Low temperature for precise, non-hallucinated extractions
+      topP: 0.95,
+      maxOutputTokens: 2048,
+    }
+  };
+
+  if (typeof promptText === 'object' && promptText !== null) {
+    payload.contents = promptText.contents;
+    if (promptText.systemInstruction) {
+      payload.systemInstruction = promptText.systemInstruction;
+    }
+  } else {
+    payload.contents = [
       {
         parts: [
           {
@@ -171,13 +184,8 @@ async function callGeminiApi(apiKey, promptText, enforceJson = true) {
           }
         ]
       }
-    ],
-    generationConfig: {
-      temperature: 0.2, // Low temperature for precise, non-hallucinated extractions
-      topP: 0.95,
-      maxOutputTokens: 2048,
-    }
-  };
+    ];
+  }
 
   if (enforceJson) {
     payload.generationConfig.responseMimeType = 'application/json';
@@ -420,16 +428,17 @@ Generate the polished final meeting intelligence report:
  * @param {string} transcriptText
  * @param {string} userQuery
  * @param {string} uiLanguage Output language context ('vi' or 'en')
+ * @param {Array} chatHistory
  * @returns {Promise<string>} Gemini response text.
  */
-async function chatWithMeeting(apiKey, transcriptText, userQuery, uiLanguage = 'vi') {
+async function chatWithMeeting(apiKey, transcriptText, userQuery, uiLanguage = 'vi', chatHistory = []) {
   if (!apiKey) {
     throw new Error('API Key is required.');
   }
   if (!transcriptText || transcriptText.trim() === '') {
-    return uiLanguage === 'vi' 
+    throw new Error(uiLanguage === 'vi' 
       ? 'Không tìm thấy dữ liệu cuộc họp để trả lời.' 
-      : 'No meeting data found to answer your question.';
+      : 'No meeting data found to answer your question.');
   }
 
   // Edge-Case Mitigation: sliding-window truncation if transcript is too massive (e.g. > 80k characters)
@@ -451,9 +460,9 @@ async function chatWithMeeting(apiKey, transcriptText, userQuery, uiLanguage = '
   ];
   for (const pattern of dangerousPatterns) {
     if (pattern.test(sanitizedQuery)) {
-      return uiLanguage === 'vi'
+      throw new Error(uiLanguage === 'vi'
         ? 'Lỗi: Câu hỏi chứa từ khóa không hợp lệ (Prompt Injection detected).'
-        : 'Error: Question contains invalid keywords (Prompt Injection detected).';
+        : 'Error: Question contains invalid keywords (Prompt Injection detected).');
     }
   }
 
@@ -469,15 +478,73 @@ CRITICAL RULES:
 
 <meeting_transcript>
 ${cleanTranscript}
-</meeting_transcript>
+</meeting_transcript>`;
 
-<user_question>
-${sanitizedQuery}
-</user_question>
+  // Construct contents array for multi-turn format
+  let contents = [];
+  if (chatHistory && chatHistory.length > 0) {
+    chatHistory.forEach((msg, index) => {
+      let text = msg.text;
+      // Inject transcript context into the very first user message only
+      if (index === 0 && msg.role === 'user') {
+        text = `Here is the meeting transcript context:\n<meeting_transcript>\n${cleanTranscript}\n</meeting_transcript>\n\nUser Question:\n${msg.text}`;
+      }
+      contents.push({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: text }]
+      });
+    });
+  } else {
+    contents.push({
+      role: 'user',
+      parts: [{ text: `Here is the meeting transcript context:\n<meeting_transcript>\n${cleanTranscript}\n</meeting_transcript>\n\nUser Question:\n${sanitizedQuery}` }]
+    });
+  }
 
-Output:`;
+  const payload = {
+    systemInstruction: {
+      parts: [
+        {
+          text: systemPrompt
+        }
+      ]
+    },
+    contents: contents
+  };
 
-  return await callGeminiApi(apiKey, systemPrompt, false);
+  return await callGeminiStreamApi(apiKey, payload);
+}
+
+/**
+ * Calls the direct Gemini REST API endpoint to stream generate content.
+ * @param {string} apiKey
+ * @param {object} promptPayload
+ * @returns {Promise<Response>} HTTP Response stream.
+ */
+async function callGeminiStreamApi(apiKey, promptPayload) {
+  const model = await getSavedModel();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?key=${apiKey}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(promptPayload)
+  });
+
+  if (!response.ok) {
+    let errorMsg = `HTTP Error ${response.status}: ${response.statusText}`;
+    try {
+      const errorJson = await response.json();
+      if (errorJson.error && errorJson.error.message) {
+        errorMsg = errorJson.error.message;
+      }
+    } catch (_) {}
+    throw new Error(errorMsg);
+  }
+
+  return response;
 }
 
 /**

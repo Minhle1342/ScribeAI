@@ -5,8 +5,9 @@
  */
 
 const DB_NAME = 'GeminiMeetingRecorderDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'transcript_chunks';
+const CHAT_STORE_NAME = 'chat_history';
 
 /**
  * Open or initialize the IndexedDB connection.
@@ -31,6 +32,10 @@ function openMeetingDB() {
         // Create store with an auto-incrementing key
         db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
         console.log(`IndexedDB Object Store "${STORE_NAME}" created successfully.`);
+      }
+      if (!db.objectStoreNames.contains(CHAT_STORE_NAME)) {
+        db.createObjectStore(CHAT_STORE_NAME, { keyPath: 'id', autoIncrement: true });
+        console.log(`IndexedDB Object Store "${CHAT_STORE_NAME}" created successfully.`);
       }
     };
   });
@@ -127,6 +132,85 @@ async function clearTranscriptDatabase() {
   });
 }
 
+/**
+ * Save a chat message to IndexedDB.
+ * @param {string} role 'user' or 'model'
+ * @param {string} text
+ * @returns {Promise<number>}
+ */
+async function saveChatMessage(role, text) {
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    return null;
+  }
+
+  const db = await openMeetingDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([CHAT_STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(CHAT_STORE_NAME);
+    const message = {
+      role: role,
+      text: text.trim(),
+      timestamp: Date.now()
+    };
+
+    const request = store.add(message);
+
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+
+    request.onerror = (event) => {
+      console.error('Failed to save chat message to IndexedDB:', event.target.error);
+      reject(new Error(`Save chat message failed: ${event.target.error?.message}`));
+    };
+  });
+}
+
+/**
+ * Retrieve all chat messages chronologically.
+ * @returns {Promise<Array<{id: number, role: string, text: string, timestamp: number}>>}
+ */
+async function getAllChatMessages() {
+  const db = await openMeetingDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([CHAT_STORE_NAME], 'readonly');
+    const store = transaction.objectStore(CHAT_STORE_NAME);
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+      resolve(request.result || []);
+    };
+
+    request.onerror = (event) => {
+      console.error('Failed to retrieve chat messages from IndexedDB:', event.target.error);
+      reject(new Error(`Retrieve chat messages failed: ${event.target.error?.message}`));
+    };
+  });
+}
+
+/**
+ * Clear all records in the chat history database.
+ * @returns {Promise<void>}
+ */
+async function clearChatHistory() {
+  const db = await openMeetingDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([CHAT_STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(CHAT_STORE_NAME);
+    const request = store.clear();
+
+    request.onsuccess = () => {
+      console.log('IndexedDB chat history database cleared successfully.');
+      resolve();
+    };
+
+    request.onerror = (event) => {
+      console.error('Failed to clear chat history database:', event.target.error);
+      reject(new Error(`Clear chat history database failed: ${event.target.error?.message}`));
+    };
+  });
+}
+
 // Export functions for ES modules, or leave on global scope for standard script injections
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -134,7 +218,10 @@ if (typeof module !== 'undefined' && module.exports) {
     saveTranscriptChunk,
     getAllTranscriptChunks,
     getCompiledTranscript,
-    clearTranscriptDatabase
+    clearTranscriptDatabase,
+    saveChatMessage,
+    getAllChatMessages,
+    clearChatHistory
   };
 } else {
   // Bind to global scope (window or self) for content scripts or background service workers
@@ -144,6 +231,9 @@ if (typeof module !== 'undefined' && module.exports) {
     saveTranscriptChunk,
     getAllTranscriptChunks,
     getCompiledTranscript,
-    clearTranscriptDatabase
+    clearTranscriptDatabase,
+    saveChatMessage,
+    getAllChatMessages,
+    clearChatHistory
   };
 }

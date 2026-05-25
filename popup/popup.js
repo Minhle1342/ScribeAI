@@ -159,6 +159,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     refreshChatTabUI();
+    
+    // Restore persistent chat history from IndexedDB
+    if (window.meetingDB && typeof window.meetingDB.getAllChatMessages === 'function') {
+      window.meetingDB.getAllChatMessages()
+        .then((messages) => {
+          if (messages && messages.length > 0) {
+            chatHistory.innerHTML = '';
+            messages.forEach((msg) => {
+              appendChatBubble(msg.text, msg.role === 'user' ? 'user' : 'assistant');
+            });
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to load past chat history:', err);
+        });
+    }
   });
 
   // Periodically poll or listen for state changes to keep popup reactive
@@ -254,6 +271,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (response && response.success) {
           showToast('Session reset successfully.');
           updateStateUI('IDLE');
+          if (chatHistory) {
+            chatHistory.innerHTML = '';
+          }
         } else {
           showToast('Reset failed: ' + (response?.error || 'Unknown error'), true);
         }
@@ -736,6 +756,47 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
     }
   });
 
+  /**
+   * Creates an optimized, double-buffered, thread-safe token stream renderer.
+   * Utilizes requestAnimationFrame to prevent layout thrashing and UI thread locks,
+   * and uses a snapshot capture method to resolve race conditions.
+   * @param {HTMLElement} domElement The target bubble's text placeholder node
+   * @param {HTMLElement} containerElement The chat history scroll view container
+   * @returns {Function} A thread-safe function to ingest streamed token fragments
+   */
+  function createTokenAppender(domElement, containerElement) {
+    let accumulator = '';
+    let pending = false;
+    let isFirst = true;
+
+    return (token) => {
+      accumulator += token;
+
+      if (!pending) {
+        pending = true;
+
+        requestAnimationFrame(() => {
+          // 1. Thread-safe snapshot capture to avoid mid-frame race conditions
+          const snapshot = accumulator;
+          accumulator = '';
+          pending = false;
+
+          // 2. Clear visual thinking state on the very first resolved token
+          if (isFirst) {
+            domElement.textContent = '';
+            isFirst = false;
+          }
+
+          // 3. Contiguous layout repaint mutation
+          domElement.textContent += snapshot;
+
+          // 4. Force smooth scroll alignment with layout update
+          containerElement.scrollTop = containerElement.scrollHeight;
+        });
+      }
+    };
+  }
+
   async function triggerChatMessageSend() {
     const query = chatInput.value.trim();
     if (!query) return;
@@ -783,6 +844,11 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
         return;
       }
 
+      // Save user message to IndexedDB before calling API
+      if (window.meetingDB && typeof window.meetingDB.saveChatMessage === 'function') {
+        await window.meetingDB.saveChatMessage('user', query);
+      }
+
       // Retrieve Gemini parameters
       const apiKey = apiKeyInput.value.trim();
 
@@ -790,10 +856,67 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
       const loadingBubble = appendChatBubble(uiLang === 'vi' ? 'Đang suy nghĩ...' : 'Thinking...', 'assistant');
       chatHistory.scrollTop = chatHistory.scrollHeight;
 
+      // Fetch dynamic chat history to pass to API
+      let history = [];
+      if (window.meetingDB && typeof window.meetingDB.getAllChatMessages === 'function') {
+        history = await window.meetingDB.getAllChatMessages();
+      }
+
       // 4. Call geminiService.chatWithMeeting
       if (window.geminiService && typeof window.geminiService.chatWithMeeting === 'function') {
-        const responseText = await window.geminiService.chatWithMeeting(apiKey, transcriptText, query, uiLang);
-        loadingBubble.textContent = responseText;
+        const streamResponse = await window.geminiService.chatWithMeeting(apiKey, transcriptText, query, uiLang, history);
+        
+        const reader = streamResponse.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let fullAccumulatedText = '';
+
+        const appendToken = createTokenAppender(loadingBubble, chatHistory);
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          let braceCount = 0;
+          let startIndex = -1;
+
+          for (let i = 0; i < buffer.length; i++) {
+            if (buffer[i] === '{') {
+              if (braceCount === 0) {
+                startIndex = i;
+              }
+              braceCount++;
+            } else if (buffer[i] === '}') {
+              braceCount--;
+              if (braceCount === 0 && startIndex !== -1) {
+                const jsonString = buffer.substring(startIndex, i + 1);
+                try {
+                  const chunkJson = JSON.parse(jsonString);
+                  const textToken = chunkJson.candidates?.[0]?.content?.parts?.[0]?.text;
+                  if (textToken) {
+                    fullAccumulatedText += textToken;
+                    appendToken(textToken);
+                  }
+                } catch (e) {
+                  console.warn("Failed to parse partial JSON chunk:", e);
+                }
+                buffer = buffer.substring(i + 1);
+                i = -1;
+                startIndex = -1;
+              }
+            }
+          }
+        }
+
+        // Wait brief delay for any pending requestAnimationFrame frames to complete
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        // Save model message to IndexedDB
+        if (window.meetingDB && typeof window.meetingDB.saveChatMessage === 'function') {
+          await window.meetingDB.saveChatMessage('model', fullAccumulatedText || loadingBubble.textContent);
+        }
       } else {
         loadingBubble.textContent = uiLang === 'vi' 
           ? 'Lỗi: Dịch vụ Gemini chưa được khởi tạo đúng cách.'
