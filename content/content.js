@@ -1065,6 +1065,13 @@
     // Compile into dashboard bento layout
     summaryView.innerHTML = `
       <div class="scribe-summary-wrapper">
+        <!-- Top Action Bar for Export Report -->
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 16px;">
+          <button id="scribe-export-report-btn" class="scribe-export-btn" style="background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 6px; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);">
+            📄 Xuất báo cáo
+          </button>
+        </div>
+
         <!-- Topics Section -->
         <section class="scribe-summary-section">
           <h3 class="scribe-section-title">${t.topicsTitle}</h3>
@@ -1073,7 +1080,12 @@
 
         <!-- Decisions Section -->
         <section class="scribe-summary-section">
-          <h3 class="scribe-section-title">${t.decisionsTitle}</h3>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px;">
+            <h3 class="scribe-section-title" style="margin-bottom: 0;">${t.decisionsTitle}</h3>
+            <button id="scribe-export-excel-btn" class="scribe-export-btn" title="${t.exportTitle}">
+              ${t.exportExcel}
+            </button>
+          </div>
           ${decisionsHtml}
         </section>
 
@@ -1085,12 +1097,7 @@
 
         <!-- Action Items Section -->
         <section class="scribe-summary-section">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px;">
-            <h3 class="scribe-section-title" style="margin-bottom: 0;">${t.actionsTitle}</h3>
-            <button id="scribe-export-excel-btn" class="scribe-export-btn" title="${t.exportTitle}">
-              ${t.exportExcel}
-            </button>
-          </div>
+          <h3 class="scribe-section-title" style="margin-bottom: 12px;">${t.actionsTitle}</h3>
           ${actionsHtml}
         </section>
       </div>
@@ -1210,15 +1217,473 @@
         });
       });
     });
+
+    // Bind Export Report event
+    const exportReportBtn = document.getElementById('scribe-export-report-btn');
+    if (exportReportBtn) {
+      exportReportBtn.addEventListener('click', () => {
+        exportSummaryAsHTML(data);
+      });
+    }
   }
-  /**
-   * ═══════════════════════════════════════════════════════════════════
-   * GOOGLE MEET CAPTION SCRAPING MODE
-   * Uses MutationObserver to read captions directly from Google Meet's
-   * built-in subtitle DOM elements (div.ygicle.VbkSUe for text,
-   * span.NWpY1d for speaker names).
-   * ═══════════════════════════════════════════════════════════════════
-   */
+
+/**
+ * Generates a standalone HTML report from the AI summary JSON.
+ *
+ * JSON Field Mapping (from geminiService.js schema):
+ * - summary.topics[]        → { title: string, summary: string }
+ * - summary.decisions[]     → string[]
+ * - summary.difficulties[]  → { id: string, title: string, description: string, raisedBy: string }
+ * - summary.actionItems[]   → { task: string, assignee: string, deadline: string }
+ *
+ * DOM State Reading:
+ * - Action Item status  → .scribe-action-status[data-task] select (user-selected value)
+ * - AI Suggestion text  → #difficulty-card-{id} .scribe-ai-suggestion-text (textContent)
+ * - AI Citation text    → #difficulty-card-{id} .scribe-ai-citation-content (textContent)
+ * - Loading guard       → checks both known loading strings AND presence of .scribe-spinner
+ */
+function exportSummaryAsHTML(summary) {
+  // ─── Timestamp & Filename ────────────────────────────────────────────────
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('vi-VN');
+  const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  const filename = [
+    'MeetingReport',
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-') + '_' + [
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0')
+  ].join('-') + '.html';
+
+  // ─── Loading State Guard ─────────────────────────────────────────────────
+  // All known loading strings across both UI languages
+  const LOADING_STRINGS = ['Thinking...', 'Đang xử lý...'];
+
+  function isSuggestionLoading(cardEl) {
+    if (!cardEl) return false;
+    // Guard 1: spinner DOM element still present
+    if (cardEl.querySelector('.scribe-spinner')) return true;
+    // Guard 2: text matches any known loading string
+    const textEl = cardEl.querySelector('.scribe-ai-suggestion-text');
+    if (!textEl) return false;
+    return LOADING_STRINGS.some(s => textEl.textContent.includes(s));
+  }
+
+  // ─── Section 1: Topics ───────────────────────────────────────────────────
+  let topicsHtml = '';
+  if (summary.topics && summary.topics.length > 0) {
+    const items = summary.topics.map(t => `
+      <li class="card topic-card">
+        <strong class="topic-title">${escapeHtml(t.title)}</strong>
+        <p class="topic-summary">${escapeHtml(t.summary)}</p>
+      </li>
+    `).join('');
+    topicsHtml = `<ol class="topic-list">${items}</ol>`;
+  } else {
+    topicsHtml = '<p class="empty">Không có nội dung</p>';
+  }
+
+  // ─── Section 2: Decisions ────────────────────────────────────────────────
+  let decisionsHtml = '';
+  if (summary.decisions && summary.decisions.length > 0) {
+    decisionsHtml = summary.decisions.map(d => `
+      <div class="card decision-card">${escapeHtml(d)}</div>
+    `).join('');
+  } else {
+    decisionsHtml = '<p class="empty">Không có quyết định</p>';
+  }
+
+  // ─── Section 3: Difficulties ─────────────────────────────────────────────
+  let difficultiesHtml = '';
+  if (summary.difficulties && summary.difficulties.length > 0) {
+    difficultiesHtml = summary.difficulties.map(diff => {
+      const cardEl = document.getElementById(`difficulty-card-${diff.id}`);
+
+      // ── Suggestion text ──────────────────────────────────────────────────
+      let suggestionText = 'Chưa có gợi ý từ SOP.';
+      if (cardEl && !isSuggestionLoading(cardEl)) {
+        const textEl = cardEl.querySelector('.scribe-ai-suggestion-text');
+        const rawText = textEl ? textEl.textContent.trim() : '';
+        if (rawText) suggestionText = rawText;
+      }
+
+      // ── Citation text (FIX: was missing entirely before) ─────────────────
+      let citationText = '';
+      if (cardEl) {
+        const citationEl = cardEl.querySelector('.scribe-ai-citation-content');
+        const rawCitation = citationEl ? citationEl.textContent.trim() : '';
+        // Only include citation if suggestion container is visible (not hidden class)
+        const citationBox = cardEl.querySelector('.scribe-ai-suggestion-citation');
+        const citationVisible = citationBox && !citationBox.classList.contains('hidden');
+        if (rawCitation && citationVisible) citationText = rawCitation;
+      }
+
+      return `
+        <div class="card diff-card">
+          <h4 class="diff-title">${escapeHtml(diff.title)}</h4>
+          <p class="diff-description">${escapeHtml(diff.description)}</p>
+          <div class="diff-meta">Nguồn: ${escapeHtml(diff.raisedBy || 'Không xác định')}</div>
+          <div class="suggestion-box">
+            <div class="suggestion-header">🤖 AI Suggestion (from SOP)</div>
+            <div class="suggestion-body">${escapeHtml(suggestionText)}</div>
+            ${citationText ? `
+            <div class="citation-box">
+              <span class="citation-label">📎 Trích dẫn SOP:</span>
+              <em class="citation-text">${escapeHtml(citationText)}</em>
+            </div>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } else {
+    difficultiesHtml = '<p class="empty">Không có khó khăn</p>';
+  }
+
+  // ─── Section 4: Action Items ─────────────────────────────────────────────
+  let actionItemsHtml = '';
+  if (summary.actionItems && summary.actionItems.length > 0) {
+    const rows = summary.actionItems.map((item, index) => {
+      // Read live status from DOM dropdown — more reliable than item.status (not in schema)
+      const selectEl = document.querySelector(`.scribe-action-status[data-task="${escapeHtml(item.task)}"]`);
+      const currentStatus = selectEl ? selectEl.value : 'To Do';
+
+      const badgeClassMap = {
+        'To Do':       'badge-todo',
+        'In Progress': 'badge-progress',
+        'Done':        'badge-done'
+      };
+      const badgeClass = badgeClassMap[currentStatus] || 'badge-todo';
+
+      return `
+        <tr class="${index % 2 === 0 ? 'row-even' : 'row-odd'}">
+          <td class="col-index">${index + 1}</td>
+          <td class="col-task">${escapeHtml(item.task)}</td>
+          <td class="col-assignee">${escapeHtml(item.assignee || 'Chưa phân công')}</td>
+          <td class="col-deadline">${escapeHtml(item.deadline || 'Không xác định')}</td>
+          <td class="col-status"><span class="badge ${badgeClass}">${escapeHtml(currentStatus)}</span></td>
+        </tr>
+      `;
+    }).join('');
+
+    actionItemsHtml = `
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 40px;">#</th>
+            <th>Công việc</th>
+            <th style="width: 160px;">Người phụ trách</th>
+            <th style="width: 140px;">Deadline</th>
+            <th style="width: 110px;">Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } else {
+    actionItemsHtml = '<p class="empty">Không có công việc cần làm</p>';
+  }
+
+  // ─── Full HTML Template ───────────────────────────────────────────────────
+  const htmlContent = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meeting Report – ${dateStr}</title>
+  <style>
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 15px;
+      color: #1a1a2e;
+      background-color: #f4f6fb;
+      line-height: 1.65;
+    }
+
+    /* ── Page Shell ── */
+    .page-wrapper {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px 60px;
+    }
+
+    /* ── Report Header ── */
+    .report-header {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 32px 36px;
+      margin-bottom: 32px;
+      border-bottom: 4px solid #4f46e5;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .report-header h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: #1a1a2e;
+      letter-spacing: -0.3px;
+    }
+    .report-header .report-meta {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #6b7280;
+    }
+    .report-header .report-meta span {
+      margin-right: 20px;
+    }
+
+    /* ── Section Card ── */
+    .report-section {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 28px 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #4f46e5;
+      padding-bottom: 12px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid #e5e7eb;
+      letter-spacing: -0.1px;
+    }
+
+    /* ── Generic Card ── */
+    .card {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 12px;
+      background: #fafafa;
+    }
+    .card:last-child { margin-bottom: 0; }
+
+    /* ── Topics ── */
+    .topic-list {
+      list-style: none;
+      counter-reset: topic-counter;
+      padding: 0;
+    }
+    .topic-card {
+      counter-increment: topic-counter;
+      padding-left: 52px;
+      position: relative;
+    }
+    .topic-card::before {
+      content: counter(topic-counter);
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 26px;
+      height: 26px;
+      background: #4f46e5;
+      color: #fff;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    .topic-title {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      color: #1a1a2e;
+      margin-bottom: 6px;
+    }
+    .topic-summary {
+      font-size: 13px;
+      color: #4b5563;
+      margin: 0;
+    }
+
+    /* ── Decisions ── */
+    .decision-card {
+      border-left: 4px solid #4f46e5;
+      font-size: 14px;
+      color: #1a1a2e;
+    }
+
+    /* ── Difficulties ── */
+    .diff-card {
+      border-left: 4px solid #f59e0b;
+    }
+    .diff-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #92400e;
+      margin-bottom: 8px;
+    }
+    .diff-description {
+      font-size: 13px;
+      color: #4b5563;
+      margin-bottom: 10px;
+    }
+    .diff-meta {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-bottom: 14px;
+    }
+
+    /* ── AI Suggestion Box ── */
+    .suggestion-box {
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .suggestion-header {
+      font-size: 12px;
+      font-weight: 700;
+      color: #4338ca;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .suggestion-body {
+      font-size: 13px;
+      color: #312e81;
+      line-height: 1.6;
+    }
+
+    /* ── Citation Box ── */
+    .citation-box {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: rgba(52, 211, 153, 0.08);
+      border: 1px dashed rgba(52, 211, 153, 0.5);
+      border-radius: 6px;
+    }
+    .citation-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: #065f46;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .citation-text {
+      font-size: 12px;
+      color: #047857;
+      font-style: italic;
+      line-height: 1.5;
+    }
+
+    /* ── Action Items Table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 11px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f3f4f6;
+      font-weight: 600;
+      color: #374151;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .row-even { background: #ffffff; }
+    .row-odd  { background: #f9fafb; }
+    .col-index { color: #9ca3af; font-size: 12px; text-align: center; vertical-align: middle; }
+
+    /* ── Status Badge ── */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge-todo     { background: #f3f4f6; color: #4b5563; }
+    .badge-progress { background: #dbeafe; color: #1d4ed8; }
+    .badge-done     { background: #dcfce7; color: #15803d; }
+
+    /* ── Empty State ── */
+    .empty {
+      color: #9ca3af;
+      font-style: italic;
+      font-size: 13px;
+      padding: 4px 0;
+    }
+
+    /* ── Print Overrides ── */
+    @media print {
+      body { background: #fff; }
+      .page-wrapper { margin: 0; padding: 0; }
+      .report-section { box-shadow: none; border: 1px solid #e5e7eb; }
+      .card { page-break-inside: avoid; }
+      tr   { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-wrapper">
+
+    <div class="report-header">
+      <h1>📋 Company Meeting Report</h1>
+      <div class="report-meta">
+        <span>📅 Ngày: ${dateStr}</span>
+        <span>⏰ Giờ: ${timeStr}</span>
+        <span>⚙️ Tạo bởi: Scribe AI</span>
+      </div>
+    </div>
+
+    <section class="report-section">
+      <h2 class="section-title">📋 Chủ đề thảo luận</h2>
+      ${topicsHtml}
+    </section>
+
+    <section class="report-section">
+      <h2 class="section-title">✅ Quyết định</h2>
+      ${decisionsHtml}
+    </section>
+
+    <section class="report-section">
+      <h2 class="section-title">⚠️ Khó khăn & Rủi ro</h2>
+      ${difficultiesHtml}
+    </section>
+
+    <section class="report-section">
+      <h2 class="section-title">📌 Action Items</h2>
+      ${actionItemsHtml}
+    </section>
+
+  </div>
+</body>
+</html>`;
+
+  // ─── Trigger Download ─────────────────────────────────────────────────────
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 100);
+}
 
   /**
    * Agnostic Closed Caption (CC) Auto-Enabler
@@ -1704,7 +2169,7 @@
 
         const rectX = Math.min(startX, endX);
         const rectY = Math.min(startY, endY);
-        showCropToolbar(rectX, rectY, rectW, rectH, img);
+        showCropToolbar(rectX, rectY, rectW, rectH, img, dpr);
       };
 
       cropOverlay.addEventListener('mousedown', handleMouseDown);
@@ -1735,7 +2200,7 @@
     }
   }
 
-  function showCropToolbar(x, y, w, h, img) {
+  function showCropToolbar(x, y, w, h, img, dpr) {
     removeCropToolbar();
 
     const toolbar = document.createElement('div');
@@ -1772,20 +2237,20 @@
     const copyBtn = toolbar.querySelector('#scribe-crop-copy');
     copyBtn.onclick = async (e) => {
       e.stopPropagation();
-      await executeVisionAction('extract', x, y, w, h, img, 'vi');
+      await executeVisionAction('extract', x, y, w, h, img, 'vi', dpr);
     };
 
     const transBtn = toolbar.querySelector('#scribe-crop-trans');
     transBtn.onclick = async (e) => {
       e.stopPropagation();
       const lang = toolbar.querySelector('#scribe-crop-lang').value;
-      await executeVisionAction('translate', x, y, w, h, img, lang);
+      await executeVisionAction('translate', x, y, w, h, img, lang, dpr);
     };
 
     activeCropToolbar = toolbar;
   }
 
-  async function executeVisionAction(mode, x, y, w, h, img, targetLang) {
+  async function executeVisionAction(mode, x, y, w, h, img, targetLang, dpr) {
     try {
       const toolbar = activeCropToolbar;
       if (toolbar) {
@@ -1795,11 +2260,21 @@
         `;
       }
 
+      const dprScale = dpr || window.devicePixelRatio || 1;
       const cropCanvas = document.createElement('canvas');
+      // Output canvas stays at CSS pixel size (controls file size sent to API)
       cropCanvas.width = w;
       cropCanvas.height = h;
       const cropCtx = cropCanvas.getContext('2d');
-      cropCtx.drawImage(img, x, y, w, h, 0, 0, w, h);
+      // Source coordinates must be scaled to physical pixels
+      cropCtx.drawImage(
+        img,
+        x * dprScale,       // source x in physical pixels
+        y * dprScale,       // source y in physical pixels
+        w * dprScale,       // source width in physical pixels
+        h * dprScale,       // source height in physical pixels
+        0, 0, w, h          // destination: CSS pixel canvas
+      );
       
       const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.85);
       const base64Data = dataUrl.split(',')[1];
