@@ -996,6 +996,114 @@
   }
 }
 
+/* Glassmorphism Floating Streaming Tooltip */
+.scribe-magic-tooltip {
+  position: absolute;
+  width: 320px;
+  max-height: 240px;
+  background: rgba(10, 8, 20, 0.88);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid #a855f7; /* Visual accent matching Scribe's branding */
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5), 0 0 25px rgba(168, 85, 247, 0.12);
+  z-index: 1000000;
+  pointer-events: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: scribe-tooltip-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  user-select: text; /* Allows user to copy text directly out of the tooltip */
+}
 
+.scribe-magic-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
 
+.scribe-magic-tooltip-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #a855f7;
+}
 
+.scribe-magic-tooltip-close {
+  background: transparent;
+  border: none;
+  color: #a49fc6;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px;
+  transition: color 0.2s ease;
+  line-height: 1;
+}
+
+.scribe-magic-tooltip-close:hover {
+  color: #ffffff;
+}
+
+.scribe-magic-tooltip-body {
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #f3f1f8;
+  overflow-y: auto;
+  max-height: 190px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Elegant Customized Scrollbar */
+.scribe-magic-tooltip-body::-webkit-scrollbar {
+  width: 4px;
+}
+.scribe-magic-tooltip-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scribe-magic-tooltip-body::-webkit-scrollbar-thumb {
+  background: rgba(168, 85, 247, 0.3);
+  border-radius: 2px;
+}
+.scribe-magic-tooltip-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.5);
+}
+
+/* Toolbar Dropdown Stylings */
+.scribe-crop-select {
+  background: rgba(15, 12, 30, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.scribe-crop-select:hover, .scribe-crop-select:focus {
+  border-color: #a855f7;
+  background: rgba(15, 12, 30, 0.95);
+}
+
+/* Entrance Animation */
+@keyframes scribe-tooltip-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

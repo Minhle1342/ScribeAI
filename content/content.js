@@ -20,10 +20,13 @@
   let overlayEl = null;
   let gmeetObserver = null; // MutationObserver for Google Meet captions
   let lastCaptionTexts = new Map(); // Track last known text per speaker block to detect changes
+  let preInitLiveLogBuffer = []; // In-memory queue to buffer live transcripts before UI mounts
 
   // Magic Pencil State Management
   let currentCropCleanup = null;
   let activeCropToolbar = null;
+  let activeCropTooltip = null;
+  let lastActiveCropBase64 = null;
 
   // Context validity helper to catch extension reloads gracefully
   function checkContextValidity() {
@@ -298,6 +301,9 @@
 
     // Hook DOM controllers
     setupControllers();
+
+    // Flush any buffered transcript messages immediately upon layout paint
+    flushPreInitLiveLogBuffer();
   }
 
   function downloadBlob(blob, filename) {
@@ -743,6 +749,10 @@
   function updateStateView(state, errorMsg = null, summaryData = null) {
     activeState = state;
 
+    if (state === 'IDLE' || state === 'ERROR' || state === 'INITIALIZING') {
+      preInitLiveLogBuffer = [];
+    }
+
     const startBtn = document.getElementById('scribe-start-btn');
     const pauseBtn = document.getElementById('scribe-pause-btn');
     const stopBtn = document.getElementById('scribe-stop-btn');
@@ -776,6 +786,42 @@
     }
 
     switch (state) {
+      case 'INITIALIZING':
+        startBtn.style.display = 'flex';
+        startBtn.disabled = true;
+        if (pauseBtn) {
+          pauseBtn.style.display = 'none';
+          pauseBtn.disabled = true;
+        }
+        stopBtn.disabled = true;
+        if (cancelBtn) {
+          cancelBtn.style.display = 'flex';
+          cancelBtn.disabled = true;
+        }
+        if (statusText) statusText.textContent = 'Initializing';
+        if (exportContainer) exportContainer.style.display = 'none';
+        showLoadingSpinner('Initializing Audio Capture...', 'Connecting dual-stream mixer and WebSocket client...');
+        switchTab('SUMMARY');
+        break;
+
+      case 'STOPPING':
+        startBtn.style.display = 'flex';
+        startBtn.disabled = true;
+        if (pauseBtn) {
+          pauseBtn.style.display = 'none';
+          pauseBtn.disabled = true;
+        }
+        stopBtn.disabled = true;
+        if (cancelBtn) {
+          cancelBtn.style.display = 'flex';
+          cancelBtn.disabled = true;
+        }
+        if (statusText) statusText.textContent = 'Stopping';
+        if (exportContainer) exportContainer.style.display = 'none';
+        showLoadingSpinner('Stopping Capture...', 'Performing atomic stream closures, releasing hardware locks, and shutting down WebSockets...');
+        switchTab('SUMMARY');
+        break;
+
       case 'RECORDING':
         startBtn.style.display = 'none';
         startBtn.disabled = true;
@@ -790,6 +836,9 @@
         }
         if (statusText) statusText.textContent = 'Recording';
         if (exportContainer) exportContainer.style.display = 'none';
+        
+        // Auto-enable Google Meet subtitles if not already active
+        ensureGoogleMeetCaptionsOn();
         break;
 
       case 'PAUSED':
@@ -819,7 +868,20 @@
         }
         if (statusText) statusText.textContent = 'Summarizing';
         if (exportContainer) exportContainer.style.display = 'none';
-        showLoadingSpinner('Synthesizing Meeting Intelligence...', 'Gemini is compiling topic segments & rolling summaries.');
+        
+        if (checkContextValidity()) {
+          chrome.storage.local.get(['summaryProgress'], (data) => {
+            if (data.summaryProgress && data.summaryProgress.totalChunks) {
+              const progress = data.summaryProgress;
+              const percent = Math.round((progress.currentChunk / progress.totalChunks) * 100);
+              updateSummarizationProgressView(percent, progress.currentChunk, progress.totalChunks);
+            } else {
+              showLoadingSpinner('Synthesizing Meeting Intelligence...', 'Gemini is compiling topic segments & rolling summaries.');
+            }
+          });
+        } else {
+          showLoadingSpinner('Synthesizing Meeting Intelligence...', 'Gemini is compiling topic segments & rolling summaries.');
+        }
         switchTab('SUMMARY');
         break;
 
@@ -918,7 +980,11 @@
    */
   function appendLiveTranscript(text) {
     const liveBox = document.getElementById('scribe-live-box');
-    if (!liveBox) return;
+    if (!liveBox) {
+      console.log('[Scribe] #scribe-live-box not ready. Buffering transcript segment:', text);
+      preInitLiveLogBuffer.push(text);
+      return;
+    }
 
     // Remove empty placeholder
     const emptyEl = liveBox.querySelector('.scribe-transcript-empty');
@@ -941,6 +1007,40 @@
   }
 
   /**
+   * Flush any buffered live transcript segments into the newly mounted live box.
+   */
+  function flushPreInitLiveLogBuffer() {
+    const liveBox = document.getElementById('scribe-live-box');
+    if (!liveBox || preInitLiveLogBuffer.length === 0) return;
+
+    console.log(`[Scribe] Flushing ${preInitLiveLogBuffer.length} buffered segments into #scribe-live-box.`);
+    
+    // Remove empty placeholder
+    const emptyEl = liveBox.querySelector('.scribe-transcript-empty');
+    if (emptyEl) {
+      liveBox.innerHTML = '';
+    }
+
+    preInitLiveLogBuffer.forEach((item) => {
+      if (typeof item === 'string') {
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const segment = document.createElement('div');
+        segment.className = 'scribe-transcript-segment';
+        segment.innerHTML = `
+          <span class="scribe-timestamp">[${timeStr}]</span>
+          <span>${escapeHtml(item)}</span>
+        `;
+        liveBox.appendChild(segment);
+      } else if (item && item.type === 'gmeet') {
+        appendGmeetCaption(item.speaker, item.text, item.blockKey);
+      }
+    });
+
+    preInitLiveLogBuffer = [];
+    liveBox.scrollTop = liveBox.scrollHeight;
+  }
+
+  /**
    * Renders the loading feedback visualizer inside Summary panel.
    */
   function showLoadingSpinner(title, subtext) {
@@ -954,6 +1054,50 @@
         <div class="scribe-loading-subtext">${escapeHtml(subtext)}</div>
       </div>
     `;
+  }
+
+  /**
+   * Dynamically renders and updates a high-fidelity glassmorphic rolling progress bar for summarization.
+   */
+  function updateSummarizationProgressView(percent, current, total) {
+    const summaryView = document.getElementById('scribe-summary-view');
+    if (!summaryView) return;
+
+    let progressPanel = summaryView.querySelector('.scribe-loading-panel');
+    let fill = document.getElementById('scribe-progress-bar-fill');
+    
+    // Inject structural progress layout if not present
+    if (!progressPanel || !fill) {
+      summaryView.innerHTML = `
+        <div class="scribe-loading-panel">
+          <div class="scribe-spinner"></div>
+          <div class="scribe-loading-text">Synthesizing Meeting Intelligence...</div>
+          <div class="scribe-loading-subtext">Gemini is compiling topic segments & rolling summaries.</div>
+          
+          <div id="scribe-progress-bar-container" style="width: 80%; margin: 16px auto 0 auto; display: flex; flex-direction: column; gap: 6px; text-align: left;">
+            <div style="display: flex; justify-content: space-between; font-size: 11px; color: #9aa0a6; font-weight: 500; font-family: system-ui, -apple-system, sans-serif;">
+              <span id="scribe-progress-bar-label">Analyzing chunk 0/0...</span>
+              <span id="scribe-progress-bar-percent">0%</span>
+            </div>
+            <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.05); border-radius: 3px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05);">
+              <div id="scribe-progress-bar-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #a78bfa, #8b5cf6); border-radius: 3px; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);"></div>
+            </div>
+          </div>
+        </div>
+      `;
+      fill = document.getElementById('scribe-progress-bar-fill');
+    }
+
+    const pct = document.getElementById('scribe-progress-bar-percent');
+    const label = document.getElementById('scribe-progress-bar-label');
+
+    if (fill) fill.style.width = `${percent}%`;
+    if (pct) pct.textContent = `${percent}%`;
+    if (label) {
+      label.textContent = uiLanguage === 'vi'
+        ? `Đang phân tích đoạn ${current}/${total}...`
+        : `Analyzing chunk ${current}/${total}...`;
+    }
   }
 
   /**
@@ -1676,63 +1820,6 @@ function exportSummaryAsHTML(summary) {
 }
 
   /**
-   * Agnostic Closed Caption (CC) Auto-Enabler
-   * Scans buttons in the Google Meet toolbar to locate and click the caption toggle.
-   * Utilizes language-independent SVG paths (Material Design CC icon coordinates)
-   * and generic attribute string patterns.
-   */
-  function ensureGoogleMeetCCEnabled() {
-    // 1. If the caption container already exists, captions are active.
-    const captionContainer = document.querySelector('div[role="region"][aria-label="Phụ đề"]')
-                          || document.querySelector('div[role="region"][aria-label="Captions"]')
-                          || document.querySelector('div.vNKgIf')
-                          || document.querySelector('div[aria-live="polite"]');
-    if (captionContainer) {
-      console.log('[Scribe CC] Captions are already active.');
-      return;
-    }
-
-    console.log('[Scribe CC] Attempting to auto-enable closed captions...');
-
-    // 2. Scan toolbar buttons
-    const buttons = document.querySelectorAll('button');
-    for (const btn of buttons) {
-      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-      const tooltip = (btn.getAttribute('data-tooltip') || '').toLowerCase();
-
-      // Heuristic A: Aria-label or Tooltip matching common CC indicators across EN/VI
-      if (
-        ariaLabel.includes('caption') || ariaLabel.includes('phụ đề') || ariaLabel.includes(' phụ đề') ||
-        tooltip.includes('caption') || tooltip.includes('phụ đề') ||
-        ariaLabel === 'cc' || tooltip === 'cc'
-      ) {
-        console.log('[Scribe CC] Found CC toggle via label/tooltip:', btn);
-        btn.click();
-        return;
-      }
-
-      // Heuristic B: SVG path fingerprinting (Material Design Closed Caption button)
-      const paths = btn.querySelectorAll('path');
-      for (const path of paths) {
-        const d = path.getAttribute('d') || '';
-        
-        // CC bounding box or characters path coordinates standard coordinates
-        if (
-          d.includes('M19 4H5') || 
-          d.includes('M20 4H4') || 
-          d.includes('19H5V5h14v14z') || 
-          d.includes('M19,4H5C3.89,4') ||
-          d.includes('M19 4c1.1 0 2')
-        ) {
-          console.log('[Scribe CC] Found CC toggle via SVG icon fingerprint:', btn);
-          btn.click();
-          return;
-        }
-      }
-    }
-  }
-
-  /**
    * Start observing Google Meet's caption container for real-time text changes.
    */
   function startGmeetCaptionObserver() {
@@ -1740,64 +1827,91 @@ function exportSummaryAsHTML(summary) {
     stopGmeetCaptionObserver();
     lastCaptionTexts.clear();
 
-    // Auto-enable captions seamlessly before observing
-    ensureGoogleMeetCCEnabled();
+    console.log('[Scribe GMeet] Initializing caption observer via ensureGoogleMeetCaptionsOn...');
 
-    console.log('[Scribe GMeet] Starting Google Meet caption observer...');
-
-    // Short timeout to allow Google Meet UI to mount the caption DOM elements if clicked
-    setTimeout(() => {
-      // Find the caption region container
-      const captionContainer = document.querySelector('div[role="region"][aria-label="Phụ đề"]')
-                            || document.querySelector('div[role="region"][aria-label="Captions"]')
-                            || document.querySelector('div.vNKgIf')
-                            || document.querySelector('div[aria-live="polite"]');
-
-      if (!captionContainer) {
-        console.warn('[Scribe GMeet] Caption container not found. Make sure Google Meet captions (CC) are turned ON.');
-        appendLiveTranscript('⚠️ Không tìm thấy vùng phụ đề Google Meet. Hãy bật phụ đề (CC) trong Google Meet trước khi sử dụng chế độ này.');
+    ensureGoogleMeetCaptionsOn(() => {
+      if (activeState !== 'RECORDING') {
+        console.log('[Scribe GMeet] State is no longer RECORDING. Aborting observer attachment.');
         return;
       }
 
-      console.log('[Scribe GMeet] Caption container found. Attaching MutationObserver...');
-      appendLiveTranscript('✅ Đã kết nối với phụ đề Google Meet. Vui lòng mở subtitle của gg meet...');
+      console.log('[Scribe GMeet] Stabilization complete. Mounting MutationObserver...');
+      
+      let attempt = 0;
+      const MAX_RETRIES = 15;
+      const RETRY_INTERVAL_MS = 300;
 
-      // Perform initial scan of existing captions already visible
-      scanExistingCaptions(captionContainer);
+      function pollForCaptionContainer() {
+        if (activeState !== 'RECORDING') {
+          console.log('[Scribe GMeet] Recording state changed during polling. Aborting observer attachment.');
+          return;
+        }
 
-      // Create MutationObserver to watch for all DOM changes inside the caption container
-      gmeetObserver = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          // Case 1: New speaker blocks added (childList on container)
-          if (mutation.type === 'childList') {
-            mutation.addedNodes.forEach((node) => {
-              if (node.nodeType === Node.ELEMENT_NODE) {
-                processCaptionBlock(node);
+        // Verify and target the correct dynamic element wrapper.
+        const parentContainer = document.querySelector('div[role="region"][aria-label="Phụ đề"]')
+                             || document.querySelector('div[role="region"][aria-label="Captions"]')
+                             || document.querySelector('div.vNKgIf')
+                             || document.querySelector('div[aria-live="polite"]');
+
+        if (parentContainer) {
+          console.log(`[Scribe GMeet] Caption container found on attempt ${attempt + 1}. Attaching MutationObserver...`);
+          appendLiveTranscript('✅ Đã kết nối với Google Meet. Vui lòng mở subtitle của gg meet để chạy...');
+
+          // Perform initial scan of existing captions already visible
+          scanExistingCaptions(parentContainer);
+
+          const observerConfig = { 
+            childList: true, 
+            subtree: true, 
+            characterData: true 
+          };
+
+          // Create MutationObserver to watch for all DOM changes inside the caption container
+          gmeetObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+              // Case 1: New speaker blocks added (childList on container)
+              if (mutation.type === 'childList') {
+                mutation.addedNodes.forEach((node) => {
+                  if (node.nodeType === Node.ELEMENT_NODE) {
+                    processCaptionBlock(node);
+                  }
+                });
               }
-            });
-          }
 
-          // Case 2: Text content changed within existing caption elements (characterData)
-          if (mutation.type === 'characterData') {
-            const parentEl = mutation.target.parentElement;
-            if (parentEl) {
-              const speakerBlock = parentEl.closest('.nMcdL') || parentEl.closest('[data-speaker-id]');
-              if (speakerBlock) {
-                processCaptionBlock(speakerBlock);
+              // Case 2: Text content changed within existing caption elements (characterData)
+              if (mutation.type === 'characterData') {
+                const parentEl = mutation.target.parentElement;
+                if (parentEl) {
+                  const speakerBlock = parentEl.closest('.nMcdL') || parentEl.closest('[data-speaker-id]');
+                  if (speakerBlock) {
+                    processCaptionBlock(speakerBlock);
+                  }
+                }
               }
             }
-          }
+            
+            // Ensure flushPreInitLiveLogBuffer is fully operational on every mutation tick
+            flushPreInitLiveLogBuffer();
+          });
+
+          gmeetObserver.observe(parentContainer, observerConfig);
+
+          console.log('[Scribe GMeet] MutationObserver active and listening for captions.');
+          return;
         }
-      });
 
-      gmeetObserver.observe(captionContainer, {
-        childList: true,
-        subtree: true,
-        characterData: true
-      });
+        attempt++;
+        if (attempt < MAX_RETRIES) {
+          setTimeout(pollForCaptionContainer, RETRY_INTERVAL_MS);
+        } else {
+          console.error('[Scribe GMeet] Caption container not found after maximum retries. Observer attachment failed.');
+          appendLiveTranscript('⚠️ Không tìm thấy vùng phụ đề Google Meet. Hãy bật phụ đề (CC) trong Google Meet trước khi sử dụng chế độ này.');
+        }
+      }
 
-      console.log('[Scribe GMeet] MutationObserver active and listening for captions.');
-    }, 400);
+      // Begin polling
+      pollForCaptionContainer();
+    });
   }
 
   /**
@@ -1921,7 +2035,7 @@ function exportSummaryAsHTML(summary) {
       const captionContainer = document.querySelector('[data-tid="closed-caption-text"]')?.closest('.ui-box') || document.body;
 
       console.log('[Scribe Teams] Attaching MutationObserver...');
-      appendLiveTranscript('✅ Đã kết nối với phụ đề MS Teams. Vui lòng mở subtitle của ms teams...');
+      appendLiveTranscript('✅ Đã kết nối với MS Teams. Vui lòng mở subtitle của ms teams...');
 
       scanExistingTeamsCaptions(captionContainer);
 
@@ -2010,7 +2124,17 @@ function exportSummaryAsHTML(summary) {
     if (!trimmedText) return;
 
     const liveBox = document.getElementById('scribe-live-box');
-    if (!liveBox) return;
+    if (!liveBox) {
+      console.log('[Scribe] #scribe-live-box not ready for GMeet caption. Buffering segment:', { speaker, text: trimmedText, blockKey });
+      
+      const existingIdx = preInitLiveLogBuffer.findIndex(item => item && item.blockKey === blockKey);
+      if (existingIdx !== -1) {
+        preInitLiveLogBuffer[existingIdx].text = trimmedText;
+      } else {
+        preInitLiveLogBuffer.push({ type: 'gmeet', speaker, text: trimmedText, blockKey });
+      }
+      return;
+    }
 
     // Remove empty placeholder
     const emptyEl = liveBox.querySelector('.scribe-transcript-empty');
@@ -2110,6 +2234,10 @@ function exportSummaryAsHTML(summary) {
       updateVolumeVisuals(message.volume);
     }
 
+    if (message.action === 'SUMMARIZATION_PROGRESS') {
+      updateSummarizationProgressView(message.percent, message.progress.currentChunk, message.progress.totalChunks);
+    }
+
     if (message.action === 'SUMMARIZATION_COMPLETE') {
       updateStateView('COMPLETED', null, message.summary);
     }
@@ -2163,6 +2291,12 @@ function exportSummaryAsHTML(summary) {
   function initializeScreenCropper(dataUrl) {
     // Prevent duplicate croppers
     if (document.querySelector('.scribe-crop-overlay')) return;
+
+    // Window Scroll Locking: Lock viewport scrolling when drawing snippet
+    document.body.style.setProperty('overflow', 'hidden', 'important');
+
+    // Reset crop base64 cache
+    lastActiveCropBase64 = null;
 
     const cropOverlay = document.createElement('div');
     cropOverlay.className = 'scribe-crop-overlay';
@@ -2220,6 +2354,17 @@ function exportSummaryAsHTML(summary) {
         ctx.strokeRect(rectX, rectY, rectW, rectH);
       };
 
+      // Double-buffered requestAnimationFrame throttling to prevent DPI render latency/frame drops
+      let renderPending = false;
+      const drawCropAreaThrottled = () => {
+        if (renderPending) return;
+        renderPending = true;
+        requestAnimationFrame(() => {
+          drawCropArea();
+          renderPending = false;
+        });
+      };
+
       const handleMouseDown = (e) => {
         if (e.button !== 0) return; // Only left click
         isDrawing = true;
@@ -2228,13 +2373,17 @@ function exportSummaryAsHTML(summary) {
         endX = e.clientX;
         endY = e.clientY;
         removeCropToolbar();
+        if (activeCropTooltip) {
+          activeCropTooltip.remove();
+          activeCropTooltip = null;
+        }
       };
 
       const handleMouseMove = (e) => {
         if (!isDrawing) return;
         endX = e.clientX;
         endY = e.clientY;
-        drawCropArea();
+        drawCropAreaThrottled();
       };
 
       const handleMouseUp = (e) => {
@@ -2269,9 +2418,33 @@ function exportSummaryAsHTML(summary) {
       window.addEventListener('keydown', handleKeyDown);
 
       const cleanupCropper = () => {
+        // Window Scroll Locking: Safely revert scroll lock to original state
+        document.body.style.removeProperty('overflow');
+
+        // Remove window keys listener
         window.removeEventListener('keydown', handleKeyDown);
+        
+        // Memory Leak Optimization: Explicitly remove mouse listeners from cropOverlay
+        cropOverlay.removeEventListener('mousedown', handleMouseDown);
+        cropOverlay.removeEventListener('mousemove', handleMouseMove);
+        cropOverlay.removeEventListener('mouseup', handleMouseUp);
+        
         removeCropToolbar();
+        
+        // Cleanup active tooltip
+        if (activeCropTooltip) {
+          activeCropTooltip.remove();
+          activeCropTooltip = null;
+        }
+
         cropOverlay.remove();
+
+        // Memory Leak Optimization: Nullify image callbacks and clear references
+        img.onload = null;
+        img.src = '';
+
+        // Clear active base64 cache
+        lastActiveCropBase64 = null;
       };
 
       currentCropCleanup = cleanupCropper;
@@ -2332,37 +2505,152 @@ function exportSummaryAsHTML(summary) {
       await executeVisionAction('translate', x, y, w, h, img, lang, dpr);
     };
 
+    // Re-translation Dropdown Cache Handler
+    const langSelect = toolbar.querySelector('#scribe-crop-lang');
+    langSelect.onchange = async (e) => {
+      e.stopPropagation();
+      const selectedLang = langSelect.value;
+      console.log(`[Cache Trigger] Transmit direct base64 translation to: ${selectedLang}`);
+      await executeVisionAction('translate', x, y, w, h, img, selectedLang, dpr);
+    };
+
     activeCropToolbar = toolbar;
+  }
+
+  function createMagicTooltip(x, y, w, h) {
+    if (activeCropTooltip) {
+      activeCropTooltip.remove();
+      activeCropTooltip = null;
+    }
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'scribe-magic-tooltip';
+
+    // Tooltip Selection Mapping Coordinates (10px below bounding box)
+    let tooltipTop = y + h + 10;
+    if (tooltipTop + 220 > window.innerHeight) {
+      tooltipTop = Math.max(10, y - 230); // Position above selection if overflow below viewport
+    }
+    let tooltipLeft = x + (w / 2) - 160;
+    if (tooltipLeft < 10) tooltipLeft = 10;
+    if (tooltipLeft + 320 > window.innerWidth - 10) {
+      tooltipLeft = window.innerWidth - 330;
+    }
+
+    tooltip.style.top = `${tooltipTop}px`;
+    tooltip.style.left = `${tooltipLeft}px`;
+
+    tooltip.innerHTML = `
+      <div class="scribe-magic-tooltip-header">
+        <span class="scribe-magic-tooltip-title">🪄 Kết quả Magic Pencil</span>
+        <button class="scribe-magic-tooltip-close" title="Đóng kết quả (ESC)">❌</button>
+      </div>
+      <div class="scribe-magic-tooltip-body"></div>
+    `;
+
+    document.body.appendChild(tooltip);
+
+    const closeBtn = tooltip.querySelector('.scribe-magic-tooltip-close');
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      tooltip.remove();
+      if (activeCropTooltip === tooltip) {
+        activeCropTooltip = null;
+      }
+    };
+
+    activeCropTooltip = tooltip;
+    return tooltip;
+  }
+
+  function createTooltipTokenAppender(container) {
+    let queue = [];
+    let rendering = false;
+    let accumulatedText = '';
+
+    const processQueue = () => {
+      if (queue.length === 0) {
+        rendering = false;
+        return;
+      }
+      
+      rendering = true;
+      const tokensToRender = queue.splice(0, Math.min(queue.length, 3));
+      accumulatedText += tokensToRender.join('');
+
+      // requestAnimationFrame Double-Buffered Rendering
+      requestAnimationFrame(() => {
+        container.textContent = accumulatedText;
+        container.scrollTop = container.scrollHeight;
+        processQueue();
+      });
+    };
+
+    return (token) => {
+      queue.push(token);
+      if (!rendering) {
+        processQueue();
+      }
+    };
   }
 
   async function executeVisionAction(mode, x, y, w, h, img, targetLang, dpr) {
     try {
-      const toolbar = activeCropToolbar;
-      if (toolbar) {
-        toolbar.innerHTML = `
-          <div class="scribe-spinner" style="width: 20px; height: 20px; border-width: 2px; border-top-color: #a855f7;"></div>
-          <span style="font-size:12px; font-weight:500; color: #ffffff;">Đang phân tích bằng Gemini...</span>
-        `;
-      }
+      if (!checkContextValidity()) return;
 
-      const dprScale = dpr || window.devicePixelRatio || 1;
-      const cropCanvas = document.createElement('canvas');
-      // Output canvas stays at CSS pixel size (controls file size sent to API)
-      cropCanvas.width = w;
-      cropCanvas.height = h;
-      const cropCtx = cropCanvas.getContext('2d');
-      // Source coordinates must be scaled to physical pixels
-      cropCtx.drawImage(
-        img,
-        x * dprScale,       // source x in physical pixels
-        y * dprScale,       // source y in physical pixels
-        w * dprScale,       // source width in physical pixels
-        h * dprScale,       // source height in physical pixels
-        0, 0, w, h          // destination: CSS pixel canvas
-      );
-      
-      const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.85);
-      const base64Data = dataUrl.split(',')[1];
+      // 1. Establish/render the floating stream tooltip
+      const tooltip = createMagicTooltip(x, y, w, h);
+      const tooltipBody = tooltip.querySelector('.scribe-magic-tooltip-body');
+
+      tooltipBody.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="scribe-spinner" style="width: 16px; height: 16px; border-width: 2px; border-top-color: #a855f7;"></div>
+          <span style="font-size: 12px; font-weight: 500; color: #a49fc6;">Đang phân tích hình ảnh bằng Gemini...</span>
+        </div>
+      `;
+
+      let base64Data = '';
+      if (lastActiveCropBase64) {
+        base64Data = lastActiveCropBase64;
+      } else {
+        const dprScale = dpr || window.devicePixelRatio || 1;
+        
+        // Safety ceilings on cropped boundaries (Clamp to maximum 1280px)
+        const MAX_DIMENSION = 1280;
+        let targetW = w;
+        let targetH = h;
+        if (w > MAX_DIMENSION || h > MAX_DIMENSION) {
+          if (w > h) {
+            targetW = MAX_DIMENSION;
+            targetH = Math.round((h * MAX_DIMENSION) / w);
+          } else {
+            targetH = MAX_DIMENSION;
+            targetW = Math.round((w * MAX_DIMENSION) / h);
+          }
+        }
+
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = targetW;
+        cropCanvas.height = targetH;
+        const cropCtx = cropCanvas.getContext('2d');
+        
+        cropCtx.drawImage(
+          img,
+          x * dprScale,
+          y * dprScale,
+          w * dprScale,
+          h * dprScale,
+          0, 0, targetW, targetH
+        );
+        
+        const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.85);
+        base64Data = dataUrl.split(',')[1];
+        lastActiveCropBase64 = base64Data; // Cache base64 crop
+
+        // Deallocate canvas width/height to free memory instantly
+        cropCanvas.width = 0;
+        cropCanvas.height = 0;
+      }
 
       let prompt = '';
       if (mode === 'extract') {
@@ -2377,19 +2665,39 @@ function exportSummaryAsHTML(summary) {
         prompt = `Analyze the provided image. First, perform highly accurate OCR to extract the text. Then, translate the extracted text into ${langName}. Output ONLY the translated text. Retain natural line breaks and formatting. Do not include any explanations, introductions, or annotations.`;
       }
 
-      chrome.runtime.sendMessage({
-        action: 'GEMINI_VISION_REQUEST',
-        base64Image: base64Data,
-        prompt: prompt
-      }, (response) => {
-        if (currentCropCleanup) currentCropCleanup();
+      // Establish persistent connection port for streaming
+      const port = chrome.runtime.connect({ name: 'gemini-vision-stream' });
+      
+      port.postMessage({
+        prompt: prompt,
+        base64Image: base64Data
+      });
 
-        if (!response || !response.success) {
-          alert('Lỗi phân tích hình ảnh: ' + (response?.error || 'Unknown error'));
-          return;
+      let isFirstToken = true;
+      let appendToken = null;
+
+      port.onMessage.addListener((msg) => {
+        if (!checkContextValidity()) return;
+
+        if (msg.success) {
+          if (msg.done) {
+            port.disconnect();
+          } else if (msg.token) {
+            if (isFirstToken) {
+              isFirstToken = false;
+              tooltipBody.textContent = ''; // clear loading state
+              appendToken = createTooltipTokenAppender(tooltipBody);
+            }
+            appendToken(msg.token);
+          }
+        } else {
+          tooltipBody.innerHTML = `<span style="color:#ef4444; font-size:12px; font-weight:500;">Lỗi: ${msg.error || 'Unknown vision error'}</span>`;
+          port.disconnect();
         }
+      });
 
-        showVisionResultModal(response.text, mode === 'extract' ? 'Kết quả trích xuất chữ' : 'Kết quả dịch thuật');
+      port.onDisconnect.addListener(() => {
+        console.log('[Magic Pencil Stream] Connection closed.');
       });
 
     } catch (err) {
@@ -2489,6 +2797,119 @@ function exportSummaryAsHTML(summary) {
     setTimeout(() => {
       toast.remove();
     }, 2500);
+  }
+
+  /**
+   * Safely locates and activates Google Meet's native captions if they are not already ON.
+   * Includes a robust selection fallback, ARIA state check, and a dynamic retry loop.
+   */
+  function ensureGoogleMeetCaptionsOn(onCCEnabledCallback) {
+    const MAX_RETRIES = 15;
+    const RETRY_INTERVAL_MS = 500;
+    let attempt = 0;
+
+    function triggerCallback() {
+      if (typeof onCCEnabledCallback === 'function') {
+        onCCEnabledCallback();
+      }
+    }
+
+    function findSubtitleButton() {
+      // Selector 1: Immutable jsname attribute
+      let btn = document.querySelector('button[jsname="RrG0hf"]');
+      if (btn) return btn;
+
+      // Selector 2: Fallback traversal from inner closed_caption icon
+      const icons = Array.from(document.querySelectorAll('i.google-symbols, span.google-symbols'));
+      const ccIcon = icons.find(icon => {
+        const text = icon.textContent.trim();
+        return text === 'closed_caption' || text === 'closed_caption_off';
+      });
+      if (ccIcon) {
+        btn = ccIcon.closest('button');
+        if (btn) return btn;
+      }
+
+      // Selector 3: Fallback scanning button aria-labels for localized subtitle keywords
+      btn = Array.from(document.querySelectorAll('button')).find(b => {
+        const label = b.getAttribute('aria-label') || '';
+        return /phụ đề|caption/i.test(label);
+      });
+      if (btn) return btn;
+
+      return null;
+    }
+
+    function areCaptionsAlreadyOn(btn) {
+      // Inject Comprehensive Debug Logging
+      console.log('[Scribe AI Debug] Subtitle Button Attributes:', {
+        ariaPressed: btn.getAttribute('aria-pressed'),
+        ariaLabel: btn.getAttribute('aria-label'),
+        className: btn.className,
+        jsname: btn.getAttribute('jsname')
+      });
+
+      // 1. Enforce Strict Fallback: aria-pressed check is primary
+      const ariaPressed = btn.getAttribute('aria-pressed');
+      if (ariaPressed === 'true') {
+        return true;
+      }
+      if (ariaPressed === 'false') {
+        return false;
+      }
+
+      // 2. Dynamic Bidirectional Label Matching (if aria-pressed is neutral or missing)
+      const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+
+      // If aria-label contains "bật", "turn on", "enable", "activate", or "on", it explicitly means captions are currently DISABLED / OFF.
+      // areCaptionsAlreadyOn must return false so the extension safely performs a .click() to turn them ON.
+      const turnOnKeywords = ['bật', 'turn on', 'enable', 'activate'];
+      const hasTurnOn = turnOnKeywords.some(keyword => label.includes(keyword)) || /\bon\b/i.test(label);
+
+      // If aria-label contains "tắt", "turn off", "disable", "deactivate", or "off", it explicitly means captions are currently ENABLED / ON.
+      // areCaptionsAlreadyOn must return true, triggering our idempotency guard to do NO-OP (Skip clicking).
+      const turnOffKeywords = ['tắt', 'turn off', 'disable', 'deactivate'];
+      const hasTurnOff = turnOffKeywords.some(keyword => label.includes(keyword)) || /\boff\b/i.test(label);
+
+      if (hasTurnOn) {
+        return false;
+      }
+      if (hasTurnOff) {
+        return true;
+      }
+
+      return false;
+    }
+
+    const pollInterval = setInterval(() => {
+      attempt++;
+      const btn = findSubtitleButton();
+
+      if (btn) {
+        clearInterval(pollInterval);
+        
+        const isAlreadyOn = areCaptionsAlreadyOn(btn);
+        console.log(`[Scribe AI Captions Auto] Found subtitle button. Captions ON state: ${isAlreadyOn}`);
+
+        if (!isAlreadyOn) {
+          btn.click();
+          console.log('[Scribe AI Captions Auto] Dispatched native click event to enable Google Meet subtitles.');
+          
+          // Strict 600ms micro-delay to let GMeet internal DOM engine compile and mount its inner text tree
+          setTimeout(() => {
+            console.log('[Scribe AI Captions Auto] 600ms stabilization window complete.');
+            triggerCallback();
+          }, 600);
+        } else {
+          console.log('[Scribe AI Captions Auto] Captions are already active. Idempotency guard triggered: No-op.');
+          triggerCallback();
+        }
+      } else if (attempt >= MAX_RETRIES) {
+        clearInterval(pollInterval);
+        console.warn('[Scribe AI Captions Auto] Google Meet subtitle control button could not be located in DOM after maximum retries.');
+        triggerCallback();
+      }
+    }, RETRY_INTERVAL_MS);
   }
 
 })();

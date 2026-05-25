@@ -18,6 +18,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusDetail = document.getElementById('status-detail');
   const toast = document.getElementById('toast');
 
+  // Track the active state of UI elements to prevent redundant redrawing and thrashing
+  let currentUIState = null;
+  let currentUIError = null;
+
   // Chat & SOP tab UI elements
   const tabBtnConfig = document.getElementById('tab-btn-config');
   const tabBtnChat = document.getElementById('tab-btn-chat');
@@ -129,7 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkMicrophonePermission();
 
   // Load current configuration and state
-  chrome.storage.local.get(['geminiApiKey', 'geminiModel', 'deepgramApiKey', 'websocketUrl', 'uiLanguage', 'recordingState', 'recordingError', 'sopRawText'], (data) => {
+  chrome.storage.local.get(['geminiApiKey', 'geminiModel', 'deepgramApiKey', 'websocketUrl', 'uiLanguage', 'recordingState', 'recordingError', 'sopRawText', 'summaryProgress'], (data) => {
     if (data.geminiModel) {
       modelSelect.value = data.geminiModel;
     } else {
@@ -147,6 +151,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     updateStateUI(data.recordingState || 'IDLE', data.recordingError);
+    if (data.recordingState === 'SUMMARIZING') {
+      if (data.summaryProgress && data.summaryProgress.totalChunks) {
+        const progress = data.summaryProgress;
+        const percent = Math.round((progress.currentChunk / progress.totalChunks) * 100);
+        updateProgressUI(percent, progress.currentChunk, progress.totalChunks);
+      } else {
+        updateProgressUI(0, 0, 0);
+      }
+    }
 
     // Load plaintext keys directly
     if (data.geminiApiKey) {
@@ -181,8 +194,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Periodically poll or listen for state changes to keep popup reactive
   setInterval(() => {
-    chrome.storage.local.get(['recordingState', 'recordingError'], (data) => {
-      updateStateUI(data.recordingState || 'IDLE', data.recordingError);
+    chrome.storage.local.get(['recordingState', 'recordingError', 'summaryProgress'], (data) => {
+      const state = data.recordingState || 'IDLE';
+      const errorMsg = data.recordingError;
+      
+      updateStateUI(state, errorMsg);
+      
+      if (state === 'SUMMARIZING') {
+        if (data.summaryProgress && data.summaryProgress.totalChunks) {
+          const progress = data.summaryProgress;
+          const percent = Math.round((progress.currentChunk / progress.totalChunks) * 100);
+          updateProgressUI(percent, progress.currentChunk, progress.totalChunks);
+        } else {
+          updateProgressUI(0, 0, 0);
+        }
+      }
     });
   }, 1000);
 
@@ -286,10 +312,88 @@ document.addEventListener('DOMContentLoaded', () => {
    * Refreshes the visual badge and text based on active recording state.
    */
   function updateStateUI(state, errorMsg = null) {
+    // If state didn't change and we aren't in SUMMARIZING state, return early to prevent thrashed redraws
+    if (currentUIState === state && currentUIError === errorMsg && state !== 'SUMMARIZING') {
+      return;
+    }
+    currentUIState = state;
+    currentUIError = errorMsg;
+
     statusBadge.className = 'badge ' + state.toLowerCase();
     statusBadge.textContent = state;
 
+    const progressContainer = document.getElementById('summarize-progress-container');
+    const inputsToLock = [apiKeyInput, deepgramKeyInput, modelSelect, wsUrlInput, uiLanguageSelect, saveBtn];
+
+    if (state === 'SUMMARIZING') {
+      // Lock inputs and tabs
+      inputsToLock.forEach(input => { if (input) input.disabled = true; });
+      resetBtn.disabled = true;
+      
+      if (tabBtnConfig) {
+        tabBtnConfig.style.pointerEvents = 'none';
+        tabBtnConfig.style.opacity = '0.5';
+      }
+      if (tabBtnSop) {
+        tabBtnSop.style.pointerEvents = 'none';
+        tabBtnSop.style.opacity = '0.5';
+      }
+
+      // Inject sleek glassmorphic progress bar if it doesn't exist
+      if (!progressContainer) {
+        const statusCard = document.querySelector('.status-card');
+        if (statusCard) {
+          const container = document.createElement('div');
+          container.id = 'summarize-progress-container';
+          container.style.marginTop = '12px';
+          container.style.background = 'rgba(255, 255, 255, 0.04)';
+          container.style.border = '1px solid rgba(255, 255, 255, 0.08)';
+          container.style.borderRadius = '10px';
+          container.style.padding = '8px 10px';
+          container.style.display = 'flex';
+          container.style.flexDirection = 'column';
+          container.style.gap = '6px';
+          
+          container.innerHTML = `
+            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); font-weight: 500;">
+              <span id="summarize-progress-label">Synthesizing rolling summaries...</span>
+              <span id="summarize-progress-percent">0%</span>
+            </div>
+            <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.05); border-radius: 3px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05);">
+              <div id="summarize-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #a78bfa, #8b5cf6); border-radius: 3px; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);"></div>
+            </div>
+          `;
+          statusCard.appendChild(container);
+        }
+      }
+    } else {
+      // Remove progress container if it exists
+      if (progressContainer) {
+        progressContainer.remove();
+      }
+
+      // Restore tabs and inputs
+      inputsToLock.forEach(input => { if (input) input.disabled = false; });
+      
+      if (tabBtnConfig) {
+        tabBtnConfig.style.pointerEvents = 'auto';
+        tabBtnConfig.style.opacity = '1';
+      }
+      if (tabBtnSop) {
+        tabBtnSop.style.pointerEvents = 'auto';
+        tabBtnSop.style.opacity = '1';
+      }
+    }
+
     switch (state) {
+      case 'INITIALIZING':
+        statusDetail.textContent = 'Setting up audio capture and initializing WebSocket pipelines...';
+        resetBtn.disabled = true;
+        break;
+      case 'STOPPING':
+        statusDetail.textContent = 'Releasing microphone streams, stopping buffers, and finalizing records...';
+        resetBtn.disabled = true;
+        break;
       case 'RECORDING':
         statusDetail.textContent = 'Streaming captured audio to STT server...';
         resetBtn.disabled = true;
@@ -315,6 +419,23 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDetail.textContent = 'Ready to capture meeting audio.';
         resetBtn.disabled = false;
         break;
+    }
+  }
+
+  /**
+   * Animates and updates the glassmorphic progress bar width and labels.
+   */
+  function updateProgressUI(percent, current, total) {
+    const bar = document.getElementById('summarize-progress-bar');
+    const pct = document.getElementById('summarize-progress-percent');
+    const label = document.getElementById('summarize-progress-label');
+    if (bar) bar.style.width = `${percent}%`;
+    if (pct) pct.textContent = `${percent}%`;
+    if (label) {
+      const isVi = uiLanguageSelect.value === 'vi';
+      label.textContent = isVi 
+        ? `Đang phân tích đoạn ${current}/${total}...` 
+        : `Analyzing chunk ${current}/${total}...`;
     }
   }
 
@@ -806,17 +927,240 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
   });
 
   /**
+   * Appends an ephemeral visual mode transition divider in the chat view.
+   * Does NOT save to IndexedDB.
+   * @param {boolean} isAuditMode True if SOP compliance mode is active
+   * @param {string} uiLang The current language configuration
+   */
+  function appendTransitionDivider(isAuditMode, uiLang) {
+    const divider = document.createElement('div');
+    divider.className = 'chat-mode-divider';
+    
+    const icon = document.createElement('span');
+    icon.className = 'divider-icon';
+    icon.textContent = isAuditMode ? '🛡️' : '💬';
+    divider.appendChild(icon);
+    
+    const text = document.createElement('span');
+    text.className = 'divider-text';
+    if (uiLang === 'vi') {
+      text.textContent = isAuditMode ? 'Đã kích hoạt Chế độ Kiểm tra SOP' : 'Đã kích hoạt Chế độ Trò chuyện Hội thoại';
+    } else {
+      text.textContent = isAuditMode ? 'SOP Audit Mode Enabled' : 'Conversational Chat Mode Enabled';
+    }
+    divider.appendChild(text);
+    
+    chatHistory.appendChild(divider);
+  }
+
+  function parseMarkdownInline(text) {
+    if (!text) return '';
+    return text.replace(/\*\*([\s\S]*?)\*\*/g, '<strong>$1</strong>');
+  }
+
+  /**
+   * Stateful stream parser that builds the premium card-based layout on the fly.
+   * Supports partial bracket tokens gracefully.
+   * @param {string} rawText The current raw text state
+   * @param {HTMLElement} container The target chat bubble element
+   */
+  function renderActiveAuditStream(rawText, container) {
+    // Clear container completely to redraw the structured layout
+    container.innerHTML = '';
+    
+    // Create the premium card wrapper
+    const wrapper = document.createElement('div');
+    wrapper.className = 'audit-response-card';
+    container.appendChild(wrapper);
+
+    // 1. Parse Summary Block
+    // Matches: [SUMMARY: CRITICAL] or [SUMMARY: COMPLIANT] or if text contains "Phát hiện vi phạm nghiêm trọng"
+    let isCritical = false;
+    let summaryContent = '';
+    let hasSummary = false;
+
+    const summaryMatch = rawText.match(/\[SUMMARY:\s*(CRITICAL|COMPLIANT)\]([\s\S]*?)(?:\[END_SUMMARY\]|$)/i);
+    if (summaryMatch) {
+      isCritical = summaryMatch[1].toUpperCase() === 'CRITICAL' || rawText.includes('Phát hiện vi phạm nghiêm trọng') || rawText.includes('[SUMMARY: CRITICAL]');
+      summaryContent = summaryMatch[2].trim();
+      hasSummary = true;
+    } else {
+      // Fallback check: if no explicit tag matches yet, but we see summary keywords
+      const lines = rawText.split('\n');
+      for (const line of lines) {
+        if (line.includes('Phát hiện vi phạm nghiêm trọng') || line.includes('[SUMMARY: CRITICAL]')) {
+          isCritical = true;
+          summaryContent = line.replace(/\[SUMMARY:\s*CRITICAL\]/i, '').replace(/🚨/g, '').trim();
+          hasSummary = true;
+          break;
+        } else if (line.includes('[SUMMARY: COMPLIANT]') || line.includes('Tuân thủ hoàn toàn') || line.includes('Không phát hiện vi phạm')) {
+          isCritical = false;
+          summaryContent = line.replace(/\[SUMMARY:\s*COMPLIANT\]/i, '').replace(/✨/g, '').trim();
+          hasSummary = true;
+          break;
+        }
+      }
+    }
+
+    if (hasSummary && summaryContent) {
+      let cleanSummary = summaryContent.replace(/\[END_SUMMARY\]/gi, '').trim();
+      cleanSummary = cleanSummary.replace(/^(🚨|✨|🚫)\s*/, '');
+      
+      const panel = document.createElement('div');
+      panel.className = `audit-summary-panel ${isCritical ? 'critical-violation' : 'compliant'}`;
+      
+      const pulseIcon = document.createElement('span');
+      pulseIcon.className = 'audit-pulse-icon';
+      pulseIcon.textContent = isCritical ? '🚨' : '✨';
+      panel.appendChild(pulseIcon);
+      
+      const textNode = document.createElement('span');
+      textNode.innerHTML = parseMarkdownInline(cleanSummary);
+      panel.appendChild(textNode);
+      
+      wrapper.appendChild(panel);
+    }
+
+    // 2. Parse all Item Blocks
+    // Matches: [ITEM] ... [END_ITEM]
+    const itemRegex = /\[ITEM\]([\s\S]*?)(?:\[END_ITEM\]|$)/gi;
+    let itemMatch;
+    while ((itemMatch = itemRegex.exec(rawText)) !== null) {
+      const itemContent = itemMatch[1];
+      
+      const block = document.createElement('div');
+      block.className = 'audit-item-block';
+      
+      // Parse Quote inside itemContent (from tags, "..." quotes, or raw text)
+      let qText = '';
+      const quoteMatch = itemContent.match(/\[QUOTE\]([\s\S]*?)(?:\[END_QUOTE\]|$)/i);
+      if (quoteMatch) {
+        qText = quoteMatch[1].trim();
+      } else {
+        // Fallback: search for text within "..." in itemContent
+        const quotesInText = itemContent.match(/"([^"]+)"/);
+        if (quotesInText) {
+          qText = quotesInText[1].trim();
+        }
+      }
+
+      if (qText) {
+        qText = qText.replace(/^["'\u201c\u201d]+|["'\u201c\u201d]+$/g, '').trim();
+        const blockquote = document.createElement('blockquote');
+        blockquote.className = 'audit-quote-box';
+        blockquote.innerHTML = `"${parseMarkdownInline(qText)}"`;
+        block.appendChild(blockquote);
+      }
+      
+      // Parse Analysis inside itemContent (from tags, after 🔍 icon, or raw text)
+      let aText = '';
+      const analysisMatch = itemContent.match(/\[ANALYSIS\]([\s\S]*?)(?:\[END_ANALYSIS\]|$)/i);
+      if (analysisMatch) {
+        aText = analysisMatch[1].trim();
+      } else {
+        const idx = itemContent.indexOf('🔍');
+        if (idx !== -1) {
+          aText = itemContent.substring(idx + 1).trim();
+        }
+      }
+
+      if (aText) {
+        aText = aText.replace(/^🔍\s*/, '').trim();
+        
+        const analysisBox = document.createElement('div');
+        analysisBox.className = 'audit-analysis-box';
+        
+        const indicator = document.createElement('span');
+        indicator.className = 'audit-analysis-indicator';
+        indicator.textContent = '🔍';
+        analysisBox.appendChild(indicator);
+        
+        const contentBox = document.createElement('blockquote');
+        contentBox.className = 'audit-quote-box audit-analysis-content';
+        contentBox.innerHTML = parseMarkdownInline(aText);
+        analysisBox.appendChild(contentBox);
+        
+        block.appendChild(analysisBox);
+      }
+      
+      wrapper.appendChild(block);
+    }
+
+    // 3. Parse Footer Block
+    let footerContent = '';
+    let hasFooter = false;
+
+    const footerMatch = rawText.match(/\[FOOTER\]([\s\S]*?)(?:\[END_FOOTER\]|$)/i);
+    if (footerMatch) {
+      footerContent = footerMatch[1].trim();
+      hasFooter = true;
+    } else {
+      // Fallback search for "Tóm lại" or "Action Required" or "⚠️"
+      const lines = rawText.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.includes('Tóm lại') || line.includes('Action Required') || line.includes('⚠️')) {
+          footerContent = lines.slice(i).join('\n').replace(/\[FOOTER\]/i, '').replace(/\[END_FOOTER\]/i, '').trim();
+          hasFooter = true;
+          break;
+        }
+      }
+    }
+
+    if (hasFooter && footerContent) {
+      let cleanFooter = footerContent.replace(/\[END_FOOTER\]/gi, '').trim();
+      
+      const footer = document.createElement('div');
+      footer.className = 'audit-footer-banner';
+      
+      const title = document.createElement('div');
+      title.className = 'audit-footer-title';
+      title.style.color = '#f59e0b';
+      title.style.fontWeight = '700';
+      title.innerHTML = `<span>⚠️</span><span>Action Required</span>`;
+      footer.appendChild(title);
+      
+      const text = document.createElement('div');
+      text.className = 'audit-footer-text';
+      text.style.color = '#f59e0b';
+      text.style.fontWeight = '600';
+      
+      cleanFooter = cleanFooter
+        .replace(/⚠️\s*Action Required:?/gi, '')
+        .replace(/⚠️/g, '')
+        .replace(/Action Required:?/gi, '')
+        .trim();
+        
+      text.innerHTML = parseMarkdownInline(cleanFooter);
+      footer.appendChild(text);
+      
+      wrapper.appendChild(footer);
+    }
+
+    // Fallback: If we don't have any audit tags parsed yet, render raw text in a standard paragraph
+    if (wrapper.children.length === 0) {
+      const p = document.createElement('p');
+      p.textContent = rawText;
+      container.appendChild(p);
+    }
+  }
+
+  /**
    * Creates an optimized, double-buffered, thread-safe token stream renderer.
    * Utilizes requestAnimationFrame to prevent layout thrashing and UI thread locks,
    * and uses a snapshot capture method to resolve race conditions.
+   * Supports standard DOM stream appending or structured token parsing on the fly.
    * @param {HTMLElement} domElement The target bubble's text placeholder node
    * @param {HTMLElement} containerElement The chat history scroll view container
+   * @param {boolean} isAuditModeActive True if SOP compliance mode is active
    * @returns {Function} A thread-safe function to ingest streamed token fragments
    */
-  function createTokenAppender(domElement, containerElement) {
+  function createTokenAppender(domElement, containerElement, isAuditModeActive = false) {
     let accumulator = '';
     let pending = false;
     let isFirst = true;
+    const bubbleWrapper = domElement.parentElement;
+    let fullText = '';
 
     return (token) => {
       accumulator += token;
@@ -834,10 +1178,20 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
           if (isFirst) {
             domElement.textContent = '';
             isFirst = false;
+            
+            if (isAuditModeActive && bubbleWrapper) {
+              bubbleWrapper.className = 'chat-bubble assistant-bubble audit-response-card';
+              bubbleWrapper.innerHTML = '';
+            }
           }
 
-          // 3. Contiguous layout repaint mutation
-          domElement.textContent += snapshot;
+          // 3. Render content or append standard text
+          if (isAuditModeActive && bubbleWrapper) {
+            fullText += snapshot;
+            renderActiveAuditStream(fullText, bubbleWrapper);
+          } else {
+            domElement.textContent += snapshot;
+          }
 
           // 4. Force smooth scroll alignment with layout update
           containerElement.scrollTop = containerElement.scrollHeight;
@@ -851,6 +1205,18 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
   async function triggerChatMessageSend() {
     const query = chatInput.value.trim();
     if (!query) return;
+
+    // Retrieve Audit configuration early to check transition
+    const isAuditModeActive = chkAuditSop ? chkAuditSop.checked : false;
+    const isTransition = (isAuditModeActive !== lastSentAuditMode);
+    lastSentAuditMode = isAuditModeActive;
+
+    const uiLang = uiLanguageSelect.value || 'vi';
+
+    // 0. Render visual transition divider if state changed
+    if (isTransition) {
+      appendTransitionDivider(isAuditModeActive, uiLang);
+    }
 
     // 1. Append User message bubble
     appendChatBubble(query, 'user');
@@ -884,8 +1250,6 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
         }
       }
 
-      const uiLang = uiLanguageSelect.value || 'vi';
-
       if (!transcriptText || transcriptText.trim() === '') {
         const errorMsg = uiLang === 'vi'
           ? 'Không tìm thấy dữ liệu cuộc họp để trả lời. Vui lòng đảm bảo cuộc họp đã bắt đầu hoặc có thoại ghi nhận.'
@@ -900,17 +1264,12 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
         await window.meetingDB.saveChatMessage('user', query);
       }
 
-      // Retrieve Audit configuration
-      const isAuditModeActive = chkAuditSop ? chkAuditSop.checked : false;
+      // Retrieve SOP text if audit mode is active
       let sopRawText = '';
       if (isAuditModeActive) {
         const localData = await new Promise(resolve => chrome.storage.local.get(['sopRawText'], resolve));
         sopRawText = localData.sopRawText || '';
       }
-
-      // Check if audit mode state changed relative to last message
-      const isTransition = (isAuditModeActive !== lastSentAuditMode);
-      lastSentAuditMode = isAuditModeActive;
 
       // Retrieve Gemini parameters
       const apiKey = apiKeyInput.value.trim();
@@ -943,7 +1302,7 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
         let buffer = '';
         let fullAccumulatedText = '';
 
-        const appendToken = createTokenAppender(loadingBubble, chatHistory);
+        const appendToken = createTokenAppender(loadingBubble, chatHistory, isAuditModeActive);
 
         while (true) {
           const { done, value } = await reader.read();
@@ -1006,6 +1365,14 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
     const bubble = document.createElement('div');
     bubble.className = `chat-bubble ${sender}-bubble`;
     
+    // Check if it is an assistant compliance audit response containing tags
+    if (sender === 'assistant' && (text.includes('[SUMMARY:') || text.includes('[ITEM]') || text.includes('[FOOTER]'))) {
+      bubble.className = 'chat-bubble assistant-bubble audit-response-card';
+      renderActiveAuditStream(text, bubble);
+      chatHistory.appendChild(bubble);
+      return bubble;
+    }
+
     const p = document.createElement('p');
     p.textContent = text;
     bubble.appendChild(p);
@@ -1013,6 +1380,23 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
     chatHistory.appendChild(bubble);
     return p;
   }
+
+  // Listen to runtime messages for real-time summarization progress updates
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('[Popup] Intercepted runtime message:', message);
+    if (message.action === 'SUMMARIZATION_PROGRESS') {
+      updateStateUI('SUMMARIZING');
+      const progress = message.progress;
+      const percent = message.percent;
+      updateProgressUI(percent, progress.currentChunk, progress.totalChunks);
+    } else if (message.action === 'SUMMARIZATION_COMPLETE') {
+      updateStateUI('COMPLETED');
+      showToast('Summarization complete!');
+    } else if (message.action === 'SUMMARIZATION_ERROR') {
+      updateStateUI('ERROR', message.error);
+      showToast('Summarization failed: ' + message.error, true);
+    }
+  });
 });
 
 // Hàm xin quyền Micro từ giao diện Popup

@@ -5,7 +5,7 @@
  * over a WebSocket to an external STT server, and stores returns in IndexedDB.
  */
 
-const USE_NATIVE_STT = true; // Feature Toggle: true for Native Web Speech API, false for WebSocket Deepgram
+const USE_NATIVE_STT = false; // Feature Toggle: true for Native Web Speech API, false for WebSocket Deepgram
 let mediaRecorder = null;
 let audioStream = null;
 let micStream = null; // Independent microphone stream
@@ -42,6 +42,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'STOP_RECORDING') {
     stopCapture();
     sendResponse({ success: true });
+    return;
+  }
+
+  if (message.action === 'PRE_CLOSE_CLEANUP') {
+    isRecordingActive = false;
+    cleanupStreams();
+    updateUIStatus('Atomic Cleanup Completed');
+    sendResponse({ success: true });
+    return;
   }
 });
 
