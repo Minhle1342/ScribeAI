@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const chatHistory = document.getElementById('chat-history');
   const chatInput = document.getElementById('chat-input');
   const btnSendChat = document.getElementById('btn-send-chat');
+  const chkAuditSop = document.getElementById('chk-audit-sop');
   const sopRawText = document.getElementById('sop-raw-text');
   const sopFileUpload = document.getElementById('sop-file-upload');
   const saveSopBtn = document.getElementById('save-sop');
@@ -748,6 +749,54 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
     chatActiveContainer.classList.remove('hidden');
   }
 
+  // SOP Compliance Audit toggle handler
+  if (chkAuditSop) {
+    chkAuditSop.addEventListener('change', async () => {
+      if (chkAuditSop.checked) {
+        const localData = await new Promise(resolve => chrome.storage.local.get(['sopRawText'], resolve));
+        const savedText = localData.sopRawText || '';
+        if (!savedText.trim()) {
+          chkAuditSop.checked = false;
+          showToast(uiLanguageSelect.value === 'vi' 
+            ? 'Vui lòng tải lên tài liệu SOP trong tab SOP Docs trước!' 
+            : 'Please upload an SOP document in the SOP Docs tab first!', true);
+        } else {
+          // Render system visual divider bubble inside chat log
+          appendSystemDividerBubble(uiLanguageSelect.value === 'vi'
+            ? '🛡️ Đã bật Chế độ Kiểm tra Tuân thủ SOP'
+            : '🛡️ SOP Compliance Audit Mode Enabled');
+        }
+      } else {
+        // Render standard mode system divider bubble
+        appendSystemDividerBubble(uiLanguageSelect.value === 'vi'
+          ? '💬 Đã quay lại Chế độ Trò chuyện Thông thường'
+          : '💬 Standard Chat Mode Restored');
+      }
+    });
+  }
+
+  function appendSystemDividerBubble(text) {
+    const divider = document.createElement('div');
+    divider.className = 'chat-bubble system-bubble';
+    divider.style.textAlign = 'center';
+    divider.style.fontStyle = 'italic';
+    divider.style.background = 'rgba(59, 130, 246, 0.15)';
+    divider.style.borderColor = 'rgba(59, 130, 246, 0.3)';
+    divider.style.margin = '8px auto';
+    divider.style.borderRadius = '8px';
+    divider.style.padding = '4px 10px';
+    divider.style.fontSize = '11px';
+    divider.style.color = '#93c5fd';
+    divider.style.width = 'fit-content';
+
+    const p = document.createElement('p');
+    p.textContent = text;
+    divider.appendChild(p);
+
+    chatHistory.appendChild(divider);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+  }
+
   // Chat message send handlers
   btnSendChat.addEventListener('click', triggerChatMessageSend);
   chatInput.addEventListener('keydown', (e) => {
@@ -796,6 +845,8 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
       }
     };
   }
+
+  let lastSentAuditMode = false;
 
   async function triggerChatMessageSend() {
     const query = chatInput.value.trim();
@@ -849,6 +900,18 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
         await window.meetingDB.saveChatMessage('user', query);
       }
 
+      // Retrieve Audit configuration
+      const isAuditModeActive = chkAuditSop ? chkAuditSop.checked : false;
+      let sopRawText = '';
+      if (isAuditModeActive) {
+        const localData = await new Promise(resolve => chrome.storage.local.get(['sopRawText'], resolve));
+        sopRawText = localData.sopRawText || '';
+      }
+
+      // Check if audit mode state changed relative to last message
+      const isTransition = (isAuditModeActive !== lastSentAuditMode);
+      lastSentAuditMode = isAuditModeActive;
+
       // Retrieve Gemini parameters
       const apiKey = apiKeyInput.value.trim();
 
@@ -864,7 +927,16 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
 
       // 4. Call geminiService.chatWithMeeting
       if (window.geminiService && typeof window.geminiService.chatWithMeeting === 'function') {
-        const streamResponse = await window.geminiService.chatWithMeeting(apiKey, transcriptText, query, uiLang, history);
+        const streamResponse = await window.geminiService.chatWithMeeting(
+          apiKey,
+          transcriptText,
+          query,
+          uiLang,
+          history,
+          isAuditModeActive,
+          sopRawText,
+          isTransition
+        );
         
         const reader = streamResponse.body.getReader();
         const decoder = new TextDecoder('utf-8');
