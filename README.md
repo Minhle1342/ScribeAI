@@ -125,6 +125,22 @@ Tiện ích đã được nâng cấp mạnh mẽ với các tính năng cốt l
   * **Grounding Tuyệt đối**: Nếu không có giải pháp trong SOP, hệ thống phản hồi chính xác `"Not found in provided SOP documents."`, triệt tiêu hoàn toàn khả năng AI tự bịa đặt giải pháp.
   * **Trích dẫn Minh bạch**: Đối với các giải pháp hợp lệ, Gemini bắt buộc phải trích xuất và trả về **nguyên văn đoạn câu văn quy trình thực tế** từ tệp SOP để làm bằng chứng xác thực (`citation`), hiển thị trực quan dưới dạng hộp trích dẫn viền nét đứt xanh lá cây bắt mắt.
 
+### 7. Tạm Dừng & Tiếp Tục Thu Âm Thông Minh (Pause & Resume) ⏸️
+* **Kiểm soát linh hoạt cuộc họp**: Thêm nút tạm dừng (Pause) chuyên dụng khi đang ghi âm cho cả 2 nguồn: ghi âm qua WebSocket STT và lấy phụ đề từ Google Meet.
+* **Nguyên lý hoạt động**:
+  * Khi người dùng nhấn nút Tạm Dừng (⏸️), trạng thái cuộc họp chuyển thành `PAUSED`.
+  * **Chế độ WebSocket (Audio capture)**: Tạm dừng gửi các gói nhị phân audio chunks lên server STT để tiết kiệm băng thông và bảo vệ quyền riêng tư khi thảo luận nội bộ ngoài lề.
+  * **Chế độ Lấy phụ đề (Google Meet)**: Tự động bỏ qua việc quét và lưu trữ các Closed Caption mới trên DOM.
+  * Khi nhấn Tiếp Tục (Resume), hệ thống khôi phục trạng thái hoạt động bình thường tức thì và tiếp tục nối tiếp hội thoại một cách liền mạch.
+
+### 8. Xuất Nhật Ký Trực Tiếp Đa Định Dạng (Multi-Format Live Logs Export) 📤
+* **Xuất trực tiếp ngay trong tab Live logs**: Tích hợp các nút xuất dữ liệu sang các tệp tin phổ biến bao gồm `.txt`, `.pdf`, `.docx`, `.doc` trực tiếp bên dưới bảng điều khiển Live logs.
+* **Tự động hóa hiển thị thông minh**: Hàng nút xuất file sẽ tự động ẩn đi khi nhật ký trống và chỉ hiển thị khi có ít nhất một dòng log xuất hiện, đảm bảo giao diện tinh gọn, sạch sẽ.
+* **Định dạng tối ưu**:
+  * **`.txt`**: Định dạng văn bản thuần UTF-8 rõ ràng.
+  * **`.doc`/`.docx`**: Định dạng Rich HTML chất lượng cao tương thích tốt với Microsoft Word, giữ nguyên cấu trúc font chữ, màu sắc và tiêu đề đẹp mắt.
+  * **`.pdf`**: Bản in sạch sẽ và tối giản qua cửa sổ in chuyên dụng của trình duyệt Chrome.
+
 ```mermaid
 graph TD
     subgraph Micro-MRP SOP Grounding Pipeline

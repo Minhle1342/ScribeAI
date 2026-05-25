@@ -152,6 +152,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // 4d. Pause Recording
+  if (message.action === 'PAUSE_RECORDING_REQUEST') {
+    (async () => {
+      try {
+        const storageMode = await chrome.storage.local.get(['captureMode']);
+        const currentMode = storageMode.captureMode || 'websocket';
+        if (currentMode === 'websocket') {
+          await chrome.runtime.sendMessage({
+            target: 'offscreen',
+            action: 'PAUSE_RECORDING'
+          }).catch((err) => console.warn('Offscreen not active or did not respond:', err));
+        } else {
+          // GMeet mode, just transition the state
+          updateGlobalState('PAUSED');
+        }
+        sendResponse({ success: true });
+      } catch (err) {
+        console.error('Failed to pause recording:', err);
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // 4e. Resume Recording
+  if (message.action === 'RESUME_RECORDING_REQUEST') {
+    (async () => {
+      try {
+        const storageMode = await chrome.storage.local.get(['captureMode']);
+        const currentMode = storageMode.captureMode || 'websocket';
+        if (currentMode === 'websocket') {
+          await chrome.runtime.sendMessage({
+            target: 'offscreen',
+            action: 'RESUME_RECORDING'
+          }).catch((err) => console.warn('Offscreen not active or did not respond:', err));
+        } else {
+          // GMeet mode, just transition the state
+          updateGlobalState('RECORDING');
+        }
+        sendResponse({ success: true });
+      } catch (err) {
+        console.error('Failed to resume recording:', err);
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
   // 4c. Handle Google Meet caption updates in-place
   if (message.action === 'UPDATE_GMEET_CAPTION') {
     chrome.storage.local.get(['gmeetCaptions'], (data) => {

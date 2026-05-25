@@ -15,6 +15,8 @@ let websocketUrl = 'ws://localhost:8080/stt'; // Default fallback, can be loaded
 let volumeInterval = null;
 let recognition = null;
 let isRecordingActive = false;
+let isPaused = false;
+
 
 // Handle messages from the background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -34,6 +36,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'STOP_RECORDING') {
     stopCapture();
+    sendResponse({ success: true });
+  }
+
+  if (message.action === 'PAUSE_RECORDING') {
+    pauseCapture();
+    sendResponse({ success: true });
+  }
+
+  if (message.action === 'RESUME_RECORDING') {
+    resumeCapture();
     sendResponse({ success: true });
   }
 });
@@ -155,6 +167,13 @@ async function startCapture(streamId, wsUrl, deepgramApiKey) {
     const dataArray = new Uint8Array(bufferLength);
     volumeInterval = setInterval(() => {
       if (audioContext && audioContext.state !== 'closed') {
+        if (isPaused) {
+          chrome.runtime.sendMessage({ 
+            action: 'VOLUME_UPDATE', 
+            volume: 0 
+          });
+          return;
+        }
         analyserNode.getByteTimeDomainData(dataArray);
         let sumSquares = 0.0;
         for (let i = 0; i < bufferLength; i++) {
@@ -265,7 +284,7 @@ function initNativeSTT() {
       recognition.onend = () => {
         console.log('[Offscreen Debug] Native STT session ended.');
         // Auto-restart if recording is active (mitigate 60s silence timeout)
-        if (isRecordingActive) {
+        if (isRecordingActive && !isPaused) {
           console.log('[Offscreen Debug] Auto-restarting Native STT session...');
           try {
             recognition.start();
@@ -362,10 +381,60 @@ function initWebSocket(url) {
  */
 function stopCapture() {
   isRecordingActive = false;
+  isPaused = false;
   cleanupStreams();
   updateUIStatus('Stopped');
   chrome.runtime.sendMessage({ action: 'RECORDING_STATE_CHANGE', state: 'IDLE' });
 }
+
+/**
+ * Pause the active recording.
+ */
+function pauseCapture() {
+  isPaused = true;
+  if (!USE_NATIVE_STT) {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.pause();
+      console.log('[Offscreen Debug] MediaRecorder paused.');
+    }
+  } else {
+    if (recognition) {
+      try {
+        recognition.stop();
+        console.log('[Offscreen Debug] Native STT paused.');
+      } catch (e) {
+        console.error('[Offscreen Debug] Failed to stop recognition:', e);
+      }
+    }
+  }
+  updateUIStatus('Paused');
+  chrome.runtime.sendMessage({ action: 'RECORDING_STATE_CHANGE', state: 'PAUSED' });
+}
+
+/**
+ * Resume the paused recording.
+ */
+function resumeCapture() {
+  isPaused = false;
+  if (!USE_NATIVE_STT) {
+    if (mediaRecorder && mediaRecorder.state === 'paused') {
+      mediaRecorder.resume();
+      console.log('[Offscreen Debug] MediaRecorder resumed.');
+    }
+  } else {
+    if (recognition && isRecordingActive) {
+      try {
+        recognition.start();
+        console.log('[Offscreen Debug] Native STT resumed.');
+      } catch (e) {
+        console.error('[Offscreen Debug] Failed to resume recognition:', e);
+      }
+    }
+  }
+  updateUIStatus('Recording & Streaming');
+  chrome.runtime.sendMessage({ action: 'RECORDING_STATE_CHANGE', state: 'RECORDING' });
+}
+
 
 /**
  * Cleanup audio tracks and close WebSocket connections safely.

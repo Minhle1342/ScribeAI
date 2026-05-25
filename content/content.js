@@ -186,6 +186,9 @@
         startRec: '🔴 Bắt đầu Ghi',
         stopRec: '⏹️ Dừng & Tóm tắt',
         cancelRec: '❌ Hủy bỏ',
+        pauseRec: '⏸️ Tạm dừng',
+        resumeRec: '▶️ Tiếp tục',
+        exportLabel: '📥 Xuất dữ liệu nhật ký:',
         liveLogs: 'Nhật ký Trực tiếp',
         aiSummary: 'Tóm tắt AI',
         noLogs: 'Chưa có bản ghi âm. Nhấn Bắt đầu để bắt đầu thu.',
@@ -198,6 +201,9 @@
         startRec: '🔴 Start Recording',
         stopRec: '⏹️ Stop & Summary',
         cancelRec: '❌ Cancel',
+        pauseRec: '⏸️ Pause',
+        resumeRec: '▶️ Resume',
+        exportLabel: '📥 Export transcript logs:',
         liveLogs: 'Live Logs',
         aiSummary: 'AI Summary',
         noLogs: 'No audio transcribed yet. Click Start to begin capturing.',
@@ -226,7 +232,7 @@
             <span class="scribe-title-text">Gemini Scribe</span>
           </div>
           <div class="scribe-header-actions">
-            <button class="scribe-btn-header" id="scribe-magic-btn" title="Magic pencil">🪄</button>
+            <button class="scribe-btn-header" id="scribe-magic-btn" title="Magic Pencil">🪄</button>
             <button class="scribe-btn-header" id="scribe-minimize-btn" title="Minimize Panel">➖</button>
           </div>
         </header>
@@ -249,6 +255,7 @@
             <div class="scribe-actions-row">
               <button id="scribe-start-btn" class="scribe-btn scribe-btn-start">${t.startRec}</button>
               <button id="scribe-stop-btn" class="scribe-btn scribe-btn-stop" disabled>${t.stopRec}</button>
+              <button id="scribe-pause-btn" class="scribe-btn scribe-btn-pause" style="display: none;">${t.pauseRec}</button>
               <button id="scribe-cancel-btn" class="scribe-btn scribe-btn-cancel" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5;">${t.cancelRec}</button>
             </div>
           </div>
@@ -263,6 +270,16 @@
           <div class="scribe-panel-content" id="scribe-panel-transcript">
             <div class="scribe-transcript-box" id="scribe-live-box" style="height: 330px;">
               <div class="scribe-transcript-empty">${t.noLogs}</div>
+            </div>
+            <!-- Export Logs Actions -->
+            <div class="scribe-export-logs-row" id="scribe-export-logs-row" style="display: none; padding: 12px 20px 0 20px;">
+              <label class="scribe-export-label">${t.exportLabel}</label>
+              <div class="scribe-export-buttons">
+                <button class="scribe-export-log-btn" data-format="txt">📄 TXT</button>
+                <button class="scribe-export-log-btn" data-format="doc">📎 DOC</button>
+                <button class="scribe-export-log-btn" data-format="docx">📘 DOCX</button>
+                <button class="scribe-export-log-btn" data-format="pdf">📕 PDF</button>
+              </div>
             </div>
           </div>
 
@@ -436,6 +453,43 @@
           if (liveBox) {
             liveBox.innerHTML = '<div class="scribe-transcript-empty">Recording cancelled. Click Start to begin capturing.</div>';
           }
+          
+          // Re-evaluate export buttons visibility
+          updateExportLogsVisibility();
+        });
+      });
+    }
+
+    // Pause / Resume recording call
+    const pauseBtn = document.getElementById('scribe-pause-btn');
+    if (pauseBtn) {
+      pauseBtn.addEventListener('click', () => {
+        if (!checkContextValidity()) return;
+        
+        if (activeState === 'RECORDING') {
+          chrome.runtime.sendMessage({ action: 'PAUSE_RECORDING_REQUEST' }, (response) => {
+            if (!response || !response.success) {
+              console.error('Pause request failed:', response?.error);
+            }
+          });
+        } else if (activeState === 'PAUSED') {
+          chrome.runtime.sendMessage({ action: 'RESUME_RECORDING_REQUEST' }, (response) => {
+            if (!response || !response.success) {
+              console.error('Resume request failed:', response?.error);
+            }
+          });
+        }
+      });
+    }
+
+    // Export log buttons click event
+    const exportRow = document.getElementById('scribe-export-logs-row');
+    if (exportRow) {
+      const exportBtns = exportRow.querySelectorAll('.scribe-export-log-btn');
+      exportBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const format = btn.getAttribute('data-format');
+          exportTranscriptData(format);
         });
       });
     }
@@ -469,20 +523,58 @@
   /**
    * Controls main screen rendering state configurations.
    */
+  /**
+   * Controls main screen rendering state configurations.
+   */
   function updateStateView(state, errorMsg = null, summaryData = null) {
     activeState = state;
 
     const startBtn = document.getElementById('scribe-start-btn');
     const stopBtn = document.getElementById('scribe-stop-btn');
+    const pauseBtn = document.getElementById('scribe-pause-btn');
     const cancelBtn = document.getElementById('scribe-cancel-btn');
     const statusText = document.getElementById('scribe-status-text');
 
     if (!startBtn || !stopBtn) return;
 
+    const t = {
+      vi: {
+        recording: 'Ghi âm',
+        paused: 'Tạm dừng',
+        summarizing: 'Đang tóm tắt',
+        done: 'Hoàn thành',
+        error: 'Lỗi',
+        idle: 'Chờ',
+        pauseRec: '⏸️ Tạm dừng',
+        resumeRec: '▶️ Tiếp tục',
+        processFailure: '⚠️ Lỗi hệ thống',
+        systemError: 'Đã xảy ra lỗi chụp màn hình/âm thanh.',
+        noLogs: 'Chưa có bản ghi âm. Nhấn Bắt đầu để bắt đầu thu.',
+        noReports: 'Chưa có báo cáo thông minh. Hoàn thành phiên ghi âm để tạo báo cáo.'
+      },
+      en: {
+        recording: 'Recording',
+        paused: 'Paused',
+        summarizing: 'Summarizing',
+        done: 'Done',
+        error: 'Error',
+        idle: 'Idle',
+        pauseRec: '⏸️ Pause',
+        resumeRec: '▶️ Resume',
+        processFailure: '⚠️ Process Failure',
+        systemError: 'A system capture error occurred.',
+        noLogs: 'No audio transcribed yet. Click Start to begin capturing.',
+        noReports: 'No intelligence reports compiled yet. Complete a recording session to generate reports.'
+      }
+    }[uiLanguage] || {
+      recording: 'Recording', paused: 'Paused', summarizing: 'Summarizing', done: 'Done', error: 'Error', idle: 'Idle',
+      pauseRec: '⏸️ Pause', resumeRec: '▶️ Resume', processFailure: '⚠️ Process Failure', systemError: 'A system capture error occurred.',
+      noLogs: 'No audio transcribed yet. Click Start to begin capturing.', noReports: 'No intelligence reports compiled yet. Complete a recording session to generate reports.'
+    };
+
     if (statusText) {
-      // Reset indicator classes
       statusText.className = 'scribe-status-badge ' + state.toLowerCase();
-      statusText.textContent = state;
+      statusText.textContent = t[state.toLowerCase()] || state;
     }
 
     switch (state) {
@@ -490,12 +582,25 @@
         startBtn.disabled = true;
         stopBtn.disabled = false;
         if (cancelBtn) cancelBtn.style.display = 'flex';
-        if (statusText) statusText.textContent = 'Recording';
+        if (pauseBtn) {
+          pauseBtn.style.display = 'flex';
+          pauseBtn.textContent = t.pauseRec;
+        }
         
-        // Clear previous transcripts on recording start
+        // Clear previous empty placeholder on initial recording start
         const liveBox = document.getElementById('scribe-live-box');
-        if (liveBox) {
+        if (liveBox && liveBox.querySelector('.scribe-transcript-empty')) {
           liveBox.innerHTML = '';
+        }
+        break;
+
+      case 'PAUSED':
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        if (cancelBtn) cancelBtn.style.display = 'flex';
+        if (pauseBtn) {
+          pauseBtn.style.display = 'flex';
+          pauseBtn.textContent = t.resumeRec;
         }
         break;
 
@@ -503,7 +608,7 @@
         startBtn.disabled = true;
         stopBtn.disabled = true;
         if (cancelBtn) cancelBtn.style.display = 'none';
-        if (statusText) statusText.textContent = 'Summarizing';
+        if (pauseBtn) pauseBtn.style.display = 'none';
         showLoadingSpinner('Synthesizing Meeting Intelligence...', 'Gemini is compiling topic segments & rolling summaries.');
         switchTab('SUMMARY');
         break;
@@ -512,7 +617,7 @@
         startBtn.disabled = false;
         stopBtn.disabled = true;
         if (cancelBtn) cancelBtn.style.display = 'none';
-        if (statusText) statusText.textContent = 'Done';
+        if (pauseBtn) pauseBtn.style.display = 'none';
         
         if (summaryData) {
           renderFormattedSummary(summaryData);
@@ -530,8 +635,8 @@
         startBtn.disabled = false;
         stopBtn.disabled = true;
         if (cancelBtn) cancelBtn.style.display = 'flex';
-        if (statusText) statusText.textContent = 'Error';
-        showErrorPanel(errorMsg || 'A system capture error occurred.');
+        if (pauseBtn) pauseBtn.style.display = 'none';
+        showErrorPanel(errorMsg || t.systemError);
         break;
 
       case 'IDLE':
@@ -539,20 +644,292 @@
         startBtn.disabled = false;
         stopBtn.disabled = true;
         if (cancelBtn) cancelBtn.style.display = 'none';
-        if (statusText) statusText.textContent = 'Idle';
+        if (pauseBtn) pauseBtn.style.display = 'none';
         
         // Reset live logs box
         const liveBoxIdle = document.getElementById('scribe-live-box');
         if (liveBoxIdle) {
-          liveBoxIdle.innerHTML = '<div class="scribe-transcript-empty">No audio transcribed yet. Click Start to begin capturing.</div>';
+          liveBoxIdle.innerHTML = `<div class="scribe-transcript-empty">${t.noLogs}</div>`;
         }
         // Reset summary box
         const summaryViewIdle = document.getElementById('scribe-summary-view');
         if (summaryViewIdle) {
-          summaryViewIdle.innerHTML = '<div class="scribe-transcript-empty">No intelligence reports compiled yet. Complete a recording session to generate reports.</div>';
+          summaryViewIdle.innerHTML = `<div class="scribe-transcript-empty">${t.noReports}</div>`;
         }
         break;
     }
+
+    // Dynamic sizing and display of log export row
+    updateExportLogsVisibility();
+  }
+
+  /**
+   * Shows or hides the export transcript logs actions row based on state and contents.
+   * Adjusts the height of the transcript container box to prevent clipping.
+   */
+  function updateExportLogsVisibility() {
+    const exportRow = document.getElementById('scribe-export-logs-row');
+    const liveBox = document.getElementById('scribe-live-box');
+    if (!exportRow || !liveBox) return;
+
+    // Show export buttons if:
+    // 1. We are currently PAUSED, IDLE, or COMPLETED, AND
+    // 2. There is actually transcribed content (at least one segment)
+    const hasSegments = liveBox.querySelector('.scribe-transcript-segment') !== null;
+    const isExportableState = ['PAUSED', 'IDLE', 'COMPLETED'].includes(activeState);
+
+    if (isExportableState && hasSegments) {
+      exportRow.style.display = 'flex';
+      liveBox.style.height = '260px'; // Shrunk box to fit export controls perfectly!
+    } else {
+      exportRow.style.display = 'none';
+      liveBox.style.height = '330px'; // Restore standard box height
+    }
+  }
+
+  /**
+   * Parsed segments inside live transcripts box and exports to .txt, .doc, .docx, or .pdf
+   */
+  function exportTranscriptData(format) {
+    const liveBox = document.getElementById('scribe-live-box');
+    if (!liveBox) return;
+
+    const segments = Array.from(liveBox.querySelectorAll('.scribe-transcript-segment'));
+    if (segments.length === 0) {
+      alert('Không có nội dung bản ghi để xuất!');
+      return;
+    }
+
+    const parsedSegments = segments.map(seg => {
+      const timestampEl = seg.querySelector('.scribe-timestamp');
+      const speakerEl = seg.querySelector('.scribe-speaker-badge');
+      const textEl = seg.querySelector('.scribe-segment-text') || seg.querySelector('span:not(.scribe-timestamp):not(.scribe-speaker-badge)');
+      
+      return {
+        timestamp: timestampEl ? timestampEl.textContent.trim() : '',
+        speaker: speakerEl ? speakerEl.textContent.trim() : '',
+        text: textEl ? textEl.textContent.trim() : seg.textContent.replace(timestampEl?.textContent || '', '').trim()
+      };
+    });
+
+    const timestampFile = new Date().toISOString().slice(0,10) + '_' + new Date().toTimeString().slice(0,8).replace(/:/g, '-');
+    const filename = `scribe_transcript_${timestampFile}.${format}`;
+
+    if (format === 'txt') {
+      let txtContent = '';
+      parsedSegments.forEach(s => {
+        const prefix = s.speaker ? `${s.timestamp} ${s.speaker}: ` : `${s.timestamp} `;
+        txtContent += `${prefix}${s.text}\n`;
+      });
+      const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8' });
+      triggerDownload(blob, filename);
+    } else if (format === 'doc' || format === 'docx') {
+      let html = `
+        <html xmlns:o='urn:schemas-microsoft-microsoft-org:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+          <title>Gemini Scribe Meeting Transcript</title>
+          <!--[if gte mso 9]>
+          <xml>
+            <w:WordDocument>
+              <w:View>Print</w:View>
+              <w:Zoom>100</w:Zoom>
+              <w:DoNotOptimizeForBrowser/>
+            </w:WordDocument>
+          </xml>
+          <![endif]-->
+          <style>
+            body {
+              font-family: 'Segoe UI', Arial, sans-serif;
+              line-height: 1.6;
+              color: #1f2937;
+              padding: 40px;
+            }
+            h1 {
+              color: #7c3aed;
+              font-size: 22px;
+              border-bottom: 2px solid #e9d5ff;
+              padding-bottom: 8px;
+              margin-bottom: 20px;
+            }
+            .meta-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 24px;
+              background-color: #f9fafb;
+              border: 1px solid #f3f4f6;
+            }
+            .meta-table td {
+              padding: 10px 15px;
+              font-size: 13px;
+              color: #4b5563;
+            }
+            .segment {
+              margin-bottom: 12px;
+              padding: 8px 12px;
+              background-color: #faf5ff;
+              border-left: 3px solid #8b5cf6;
+            }
+            .timestamp {
+              font-size: 11px;
+              color: #7c3aed;
+              font-weight: bold;
+              margin-right: 8px;
+            }
+            .speaker {
+              font-weight: bold;
+              color: #1e1b4b;
+              background-color: #ddd6fe;
+              padding: 2px 6px;
+              font-size: 12px;
+              margin-right: 8px;
+            }
+            .text {
+              font-size: 13px;
+              color: #1f2937;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>📝 Gemini Scribe - Meeting Transcript</h1>
+          <table class="meta-table">
+            <tr>
+              <td><strong>Export Date:</strong> ${new Date().toLocaleString()}</td>
+              <td><strong>Capture Source:</strong> ${captureMode === 'gmeet' ? 'Google Meet Subtitles' : 'Voice Capture (WebSocket STT)'}</td>
+            </tr>
+          </table>
+      `;
+
+      parsedSegments.forEach(s => {
+        const speakerHtml = s.speaker ? `<span class="speaker">${escapeHtml(s.speaker)}</span>` : '';
+        html += `
+          <div class="segment">
+            <span class="timestamp">${s.timestamp}</span>
+            ${speakerHtml}
+            <span class="text">${escapeHtml(s.text)}</span>
+          </div>
+        `;
+      });
+
+      html += `
+        </body>
+        </html>
+      `;
+
+      const mimeType = format === 'doc' ? 'application/msword' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      const blob = new Blob([html], { type: `${mimeType};charset=utf-8` });
+      triggerDownload(blob, filename);
+    } else if (format === 'pdf') {
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
+      
+      const iframeDoc = iframe.contentWindow.document;
+      iframeDoc.open();
+      iframeDoc.write(`
+        <html>
+        <head>
+          <title>Gemini Scribe Meeting Transcript</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 20mm;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+              line-height: 1.6;
+              color: #1f2937;
+              padding: 20px;
+            }
+            h1 {
+              color: #7c3aed;
+              font-size: 22px;
+              border-bottom: 2px solid #e9d5ff;
+              padding-bottom: 8px;
+              margin-bottom: 20px;
+            }
+            .meta {
+              margin-bottom: 24px;
+              font-size: 12px;
+              color: #4b5563;
+              border-bottom: 1px solid #e5e7eb;
+              padding-bottom: 12px;
+            }
+            .segment {
+              margin-bottom: 12px;
+              page-break-inside: avoid;
+              padding: 6px 12px;
+              background-color: #faf5ff;
+              border-left: 3px solid #8b5cf6;
+              border-radius: 4px;
+            }
+            .timestamp {
+              font-size: 11px;
+              color: #7c3aed;
+              font-weight: bold;
+              margin-right: 8px;
+            }
+            .speaker {
+              font-weight: bold;
+              color: #1e1b4b;
+              background-color: #ddd6fe;
+              padding: 2px 6px;
+              border-radius: 4px;
+              font-size: 11px;
+              margin-right: 8px;
+            }
+            .text {
+              font-size: 13px;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>📝 Gemini Scribe - Meeting Transcript</h1>
+          <div class="meta">
+            <strong>Export Date:</strong> ${new Date().toLocaleString()} | 
+            <strong>Capture Source:</strong> ${captureMode === 'gmeet' ? 'Google Meet Subtitles' : 'Voice Capture (WebSocket STT)'}
+          </div>
+      `);
+
+      parsedSegments.forEach(s => {
+        const speakerHtml = s.speaker ? `<span class="speaker">${escapeHtml(s.speaker)}</span>` : '';
+        iframeDoc.write(`
+          <div class="segment">
+            <span class="timestamp">${s.timestamp}</span>
+            ${speakerHtml}
+            <span class="text">${escapeHtml(s.text)}</span>
+          </div>
+        `);
+      });
+
+      iframeDoc.write(`
+        </body>
+        </html>
+      `);
+      iframeDoc.close();
+
+      // Trigger standard print dialog
+      iframe.contentWindow.focus();
+      setTimeout(() => {
+        iframe.contentWindow.print();
+        setTimeout(() => {
+          document.body.removeChild(iframe);
+        }, 2000);
+      }, 500);
+    }
+  }
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   /**
@@ -580,6 +957,9 @@
     
     // Auto-scroll to bottom of logs box
     liveBox.scrollTop = liveBox.scrollHeight;
+
+    // Dynamic sizing and display of log export row
+    updateExportLogsVisibility();
   }
 
   /**
@@ -1049,6 +1429,7 @@
    * Scan existing visible caption blocks on initial observer start.
    */
   function scanExistingCaptions(container) {
+    if (activeState === 'PAUSED') return;
     const blocks = container.querySelectorAll('.nMcdL') || container.children;
     Array.from(blocks).forEach((block) => {
       if (block.nodeType !== Node.ELEMENT_NODE) return;
@@ -1084,6 +1465,7 @@
    * Only emits when text has actually changed from last known value.
    */
   function processCaptionBlock(element) {
+    if (activeState === 'PAUSED') return;
     // The element might be the block itself or a child element
     const block = element.classList?.contains('nMcdL') ? element : element.closest('.nMcdL');
     if (!block) return;
@@ -1179,6 +1561,9 @@
     }
 
     liveBox.scrollTop = liveBox.scrollHeight;
+
+    // Dynamic sizing and display of log export row
+    updateExportLogsVisibility();
   }
 
   /**
