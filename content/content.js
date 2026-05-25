@@ -11,7 +11,7 @@
   // State Management
   let activeState = 'IDLE'; // IDLE | RECORDING | SUMMARIZING | COMPLETED | ERROR
   let activeTab = 'TRANSCRIPT'; // TRANSCRIPT | SUMMARY
-  let captureMode = 'websocket'; // 'websocket' | 'gmeet'
+  let captureMode = 'websocket'; // 'websocket' | 'gmeet' | 'teams'
   let uiLanguage = 'vi'; // 'vi' | 'en'
   let isMinimized = false;
   let dragOffset = { x: 0, y: 0 };
@@ -183,6 +183,7 @@
         captureMode: '📡 Nguồn ghi âm',
         wsMode: '🎙️ Bằng Giọng Nói',
         gmeetMode: '📋 Bằng Phụ Đề (Google meet)',
+        teamsMode: '🟦 Bằng Phụ Đề (MS Teams)',
         startRec: '🔴 Bắt đầu Ghi',
         pauseRec: '⏸️ Tạm dừng',
         resumeRec: '▶️ Tiếp tục',
@@ -197,6 +198,7 @@
         captureMode: '📡 Capture Mode',
         wsMode: '🎙️ Voice (WebSocket STT)',
         gmeetMode: '📋 Captions (Google Meet)',
+        teamsMode: '🟦 Captions (MS Teams)',
         startRec: '🔴 Start Recording',
         pauseRec: '⏸️ Pause',
         resumeRec: '▶️ Resume',
@@ -244,6 +246,7 @@
               <select id="scribe-capture-mode" class="scribe-mode-dropdown">
                 <option value="websocket">${t.wsMode}</option>
                 <option value="gmeet">${t.gmeetMode}</option>
+                <option value="teams">${t.teamsMode}</option>
               </select>
             </div>
           </div>
@@ -622,14 +625,18 @@
         return;
       }
 
-      if (captureMode === 'gmeet') {
-        // Google Meet caption scraping mode
+      if (captureMode === 'gmeet' || captureMode === 'teams') {
+        // Caption scraping mode
         startBtn.disabled = true;
         stopBtn.disabled = false;
         if (checkContextValidity()) {
           chrome.storage.local.set({ gmeetCaptions: {} }, () => {
             chrome.runtime.sendMessage({ action: 'START_GMEET_RECORDING' }, () => {
-              startGmeetCaptionObserver();
+              if (captureMode === 'teams') {
+                startTeamsCaptionObserver();
+              } else {
+                startGmeetCaptionObserver();
+              }
               updateStateView('RECORDING');
             });
           });
@@ -649,9 +656,13 @@
 
     // Recording stop call
     stopBtn.addEventListener('click', () => {
-      if (captureMode === 'gmeet') {
-        // Stop Google Meet observer
-        stopGmeetCaptionObserver();
+      if (captureMode === 'gmeet' || captureMode === 'teams') {
+        // Stop observer
+        if (captureMode === 'teams') {
+          stopTeamsCaptionObserver();
+        } else {
+          stopGmeetCaptionObserver();
+        }
         startBtn.disabled = false;
         stopBtn.disabled = true;
         // Trigger summarization if context is valid
@@ -678,9 +689,13 @@
     const cancelBtn = document.getElementById('scribe-cancel-btn');
     if (cancelBtn) {
       cancelBtn.addEventListener('click', () => {
-        if (captureMode === 'gmeet') {
-          // Stop Google Meet observer
-          stopGmeetCaptionObserver();
+        if (captureMode === 'gmeet' || captureMode === 'teams') {
+          // Stop observer
+          if (captureMode === 'teams') {
+            stopTeamsCaptionObserver();
+          } else {
+            stopGmeetCaptionObserver();
+          }
         }
 
         if (!checkContextValidity()) return;
@@ -1913,6 +1928,101 @@ function exportSummaryAsHTML(summary) {
     const parent = block.parentElement;
     const idx = parent ? Array.from(parent.children).indexOf(block) : 0;
     return `${speaker}_${imgSrc}_${idx}`;
+  }
+
+  // =========================================================================
+  // Microsoft Teams Captions Observer
+  // =========================================================================
+  let teamsObserver = null;
+
+  function startTeamsCaptionObserver() {
+    stopTeamsCaptionObserver();
+    lastCaptionTexts.clear();
+
+    console.log('[Scribe Teams] Starting MS Teams caption observer...');
+
+    setTimeout(() => {
+      // Find the MS Teams caption container, default to body if specific wrapper not found
+      const captionContainer = document.querySelector('[data-tid="closed-caption-text"]')?.closest('.ui-box') || document.body;
+
+      console.log('[Scribe Teams] Attaching MutationObserver...');
+      appendLiveTranscript('✅ Đã kết nối với phụ đề MS Teams. Đang lắng nghe...');
+
+      scanExistingTeamsCaptions(captionContainer);
+
+      teamsObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.type === 'childList') {
+            mutation.addedNodes.forEach((node) => {
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                if (node.classList?.contains('fui-ChatMessageCompact')) {
+                  processTeamsCaptionBlock(node);
+                } else {
+                  const blocks = node.querySelectorAll('.fui-ChatMessageCompact');
+                  blocks.forEach(processTeamsCaptionBlock);
+                }
+              }
+            });
+          }
+          if (mutation.type === 'characterData') {
+            const parentEl = mutation.target.parentElement;
+            if (parentEl) {
+              const speakerBlock = parentEl.closest('.fui-ChatMessageCompact');
+              if (speakerBlock) {
+                processTeamsCaptionBlock(speakerBlock);
+              }
+            }
+          }
+        }
+      });
+
+      teamsObserver.observe(captionContainer, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+    }, 400);
+  }
+
+  function stopTeamsCaptionObserver() {
+    if (teamsObserver) {
+      teamsObserver.disconnect();
+      teamsObserver = null;
+      console.log('[Scribe Teams] MutationObserver disconnected.');
+    }
+    lastCaptionTexts.clear();
+  }
+
+  function scanExistingTeamsCaptions(container) {
+    const blocks = container.querySelectorAll('.fui-ChatMessageCompact');
+    Array.from(blocks).forEach(processTeamsCaptionBlock);
+  }
+
+  function processTeamsCaptionBlock(block) {
+    let textEl = block.querySelector('[data-tid="closed-caption-text"]');
+    let nameEl = block.querySelector('[data-tid="author"]');
+
+    if (!textEl) return;
+
+    const currentText = textEl.textContent.trim();
+    const speaker = nameEl ? nameEl.textContent.trim() : 'Unknown';
+    if (!currentText) return;
+
+    const blockKey = generateTeamsBlockKey(block);
+    const previousText = lastCaptionTexts.get(blockKey);
+
+    if (currentText !== previousText) {
+      lastCaptionTexts.set(blockKey, currentText);
+      appendGmeetCaption(speaker, currentText, blockKey);
+      saveCaptionToStorage(blockKey, speaker, currentText);
+    }
+  }
+
+  function generateTeamsBlockKey(block) {
+    if (block.dataset.scribeKey) return block.dataset.scribeKey;
+    const key = 'teams_' + Date.now() + '_' + Math.random().toString(36).substring(2,9);
+    block.dataset.scribeKey = key;
+    return key;
   }
 
   /**

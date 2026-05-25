@@ -14,7 +14,7 @@
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",
     "https://meet.google.com/*",
-    "https://teams.microsoft.com/*",
+    "https://teams.live.com/*",
     "https://*.zoom.us/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
@@ -34,7 +34,8 @@
         "https://teams.microsoft.com/*",
         "https://*.zoom.us/*",
         "http://localhost/*",
-        "http://127.0.0.1/*"
+        "http://127.0.0.1/*",
+        "https://teams.live.com/*"
       ],
       "js": [
         "services/db.js",
@@ -56,5 +57,11 @@
         "<all_urls>"
       ]
     }
-  ]
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://meet.google.com/*",
+      "https://teams.live.com/*"
+    ]
+  }
 }

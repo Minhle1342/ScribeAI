@@ -163,8 +163,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.get(['captureMode'], async (storageMode) => {
       const currentMode = storageMode.captureMode || 'websocket';
       
-      if (currentMode === 'gmeet') {
-        // GMeet mode: just summarize
+      if (currentMode === 'gmeet' || currentMode === 'teams') {
+        // GMeet/Teams mode: just summarize
         stopKeepAliveHeartbeat();
         updateGlobalState('SUMMARIZING');
         triggerSummarizationWorkflow()
@@ -586,7 +586,7 @@ async function triggerSummarizationWorkflow() {
     const storageMode = await chrome.storage.local.get(['captureMode']);
     const currentMode = storageMode.captureMode || 'websocket';
 
-    if (currentMode === 'gmeet') {
+    if (currentMode === 'gmeet' || currentMode === 'teams') {
       const storage = await chrome.storage.local.get(['gmeetCaptions']);
       const captions = storage.gmeetCaptions || {};
       const sortedBlocks = Object.values(captions).sort((a, b) => a.timestamp - b.timestamp);
