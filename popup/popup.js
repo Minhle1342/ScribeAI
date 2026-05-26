@@ -1226,28 +1226,47 @@ ${intermediateSummaries.join('\n\n--- PHẦN TÀI LIỆU MỚI ---\n\n')}
     chatHistory.scrollTop = chatHistory.scrollHeight;
 
     try {
-      // 2. Fetch the compiled transcript from IndexedDB
+      // 2. Fetch the compiled transcript with smart adaptive mode fallback
       let transcriptText = '';
-      if (window.meetingDB && typeof window.meetingDB.getCompiledTranscript === 'function') {
-        transcriptText = await window.meetingDB.getCompiledTranscript();
-      }
+      const localData = await new Promise(resolve => 
+        chrome.storage.local.get(['captureMode', 'gmeetCaptions', 'lastCompiledTranscript'], resolve)
+      );
+      const currentMode = localData.captureMode || 'websocket';
+      const gmeetCaptions = localData.gmeetCaptions || {};
+      const lastCompiled = localData.lastCompiledTranscript || '';
 
-      // Fallback 1: lastCompiledTranscript in chrome.storage.local
-      if (!transcriptText || transcriptText.trim() === '') {
-        const localData = await new Promise(resolve => chrome.storage.local.get(['lastCompiledTranscript'], resolve));
-        transcriptText = localData.lastCompiledTranscript || '';
-      }
-
-      // Fallback 2: Google Meet captions (Live Logs) from chrome.storage.local
-      if (!transcriptText || transcriptText.trim() === '') {
-        const localData = await new Promise(resolve => chrome.storage.local.get(['gmeetCaptions'], resolve));
-        const captions = localData.gmeetCaptions;
-        if (captions && typeof captions === 'object' && Object.keys(captions).length > 0) {
-          // Convert to sorted array of caption segments based on timestamp
-          const sortedCaptions = Object.values(captions).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      // First attempt: respect the chosen mode
+      if (currentMode === 'gmeet' || currentMode === 'teams') {
+        if (Object.keys(gmeetCaptions).length > 0) {
+          const sortedCaptions = Object.values(gmeetCaptions).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
           transcriptText = sortedCaptions.map(c => `${c.speaker || 'Unknown'}: ${c.text || ''}`).join('\n');
-          console.log(`[RAG Fallback] Compiled ${sortedCaptions.length} live log caption segments.`);
         }
+      } else {
+        if (window.meetingDB && typeof window.meetingDB.getCompiledTranscript === 'function') {
+          transcriptText = await window.meetingDB.getCompiledTranscript();
+        }
+      }
+
+      // Fallback 1: If primary mode returned empty, try the other mode
+      if (!transcriptText || transcriptText.trim() === '') {
+        if (currentMode === 'gmeet' || currentMode === 'teams') {
+          console.log('[RAG Chat] GMeet/Teams captions empty. Falling back to WebSocket database...');
+          if (window.meetingDB && typeof window.meetingDB.getCompiledTranscript === 'function') {
+            transcriptText = await window.meetingDB.getCompiledTranscript();
+          }
+        } else {
+          console.log('[RAG Chat] WebSocket database empty. Falling back to GMeet/Teams captions...');
+          if (Object.keys(gmeetCaptions).length > 0) {
+            const sortedCaptions = Object.values(gmeetCaptions).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+            transcriptText = sortedCaptions.map(c => `${c.speaker || 'Unknown'}: ${c.text || ''}`).join('\n');
+          }
+        }
+      }
+
+      // Fallback 2: Try last compiled transcript
+      if (!transcriptText || transcriptText.trim() === '') {
+        console.log('[RAG Chat] Both primary and fallback empty. Trying lastCompiledTranscript...');
+        transcriptText = lastCompiled;
       }
 
       if (!transcriptText || transcriptText.trim() === '') {

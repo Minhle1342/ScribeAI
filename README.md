@@ -157,6 +157,13 @@ graph TD
     2. **Microsoft Word (.doc)**: Bọc cấu trúc HTML hoàn chỉnh chứa thẻ khai báo định dạng MS Word chuẩn (`xmlns:o="urn:schemas-microsoft-com:office:office"...`) và nhúng font chữ cao cấp Outfit để người dùng mở trực tiếp bằng MS Word với giao diện thiết kế chuyên nghiệp, đẹp mắt.
     3. **Print PDF (.pdf)**: Tạo một thẻ ẩn `iframe` độc lập và cách ly CSS, clone toàn bộ transcript với font Outfit và áp dụng kiểu in chuẩn của CSS trước khi gọi lệnh `window.print()` giúp người dùng có thể in trực tiếp ra tệp PDF cực kỳ đẹp và không bị ảnh hưởng bởi CSS của trang web hiện tại.
 
+### 8. Đường Ống Tự Động Sửa Lỗi Ngữ Nghĩa & Âm Điệu (Semantic Auto-Correction Pipeline) 🎙️✨
+* **Khắc phục lỗi STT thô**: Loại bỏ triệt để các lỗi nhận diện sai thuật ngữ công nghệ, từ tiếng Anh bồi hoặc các lỗi ngữ âm tiếng Việt do bộ engine Speech-to-Text mặc định của Google Meet tạo ra (ví dụ: "đi bơi" -> "deploy", "đáp bo" -> "dashboard", "bút chét" -> "budget", "si ép ô" -> "CFO").
+* **Xử lý ngữ cảnh thông minh**: 
+  * Định tuyến toàn bộ transcript thô qua mô hình **`gemini-2.5-flash`** với độ trễ phản hồi cực thấp trước khi đưa vào bộ tóm tắt chính.
+  * Tận dụng tối đa bộ đếm **Rust WASM Tokenizer** nội bộ của ScribeAI để kiểm soát token đầu vào. Nếu văn bản cuộc họp quá dài vượt ngưỡng an toàn ngữ cảnh (100,000 tokens), hệ thống sẽ chủ động nén thông minh qua thuật toán `smartContextCompress` để bảo toàn cấu trúc dòng thời gian và nhãn người phát biểu.
+* **Kiến trúc chống lỗi (Defensive Recovery Fallback)**: Toàn bộ quá trình sửa ngữ âm được bọc trong các lớp try-catch cách ly. Nếu API Gateway của Gemini gặp lỗi mạng hoặc quá tải quota (HTTP 429), hệ thống sẽ lập tức cảnh báo nhẹ tại console log và tự động chuyển tiếp transcript thô ban đầu vào luồng tóm tắt cuộc họp chính để bảo đảm dịch vụ không bị gián đoạn.
+
 ---
 
 ## 🛠️ Hướng Dẫn Cài Đặt & Khởi Động Dự Án

@@ -7,7 +7,148 @@
 // Max character length per chunk (~3000-4000 words, safe token count)
 const MAX_CHUNK_CHAR_LIMIT = 20000;
 
+let wasmInstance = null;
+let wasmTokenizer = null;
+
 /**
+ * Initializes and instantiates the local size-optimized Rust WASM tokenizer binary.
+ * Implements an automatic defensive fallback in case the binary is not yet compiled or loaded.
+ */
+async function initWasmTokenizer() {
+  if (wasmTokenizer) return wasmTokenizer;
+  try {
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.getURL) {
+      return null;
+    }
+    console.log('[Scribe Tokenizer] Attempting to load WASM tokenizer core...');
+    const wasmUrl = chrome.runtime.getURL('wasm/tokenizer_core.wasm');
+    const response = await fetch(wasmUrl);
+    if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+    const buffer = await response.arrayBuffer();
+
+    const importObject = {
+      env: {
+        panic: () => {
+          console.error('[WASM] Panic occurred inside WebAssembly core.');
+        }
+      }
+    };
+
+    const { instance } = await WebAssembly.instantiate(buffer, importObject);
+    wasmInstance = instance;
+
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    function getStringFromWasmMemory(ptr) {
+      const memory = new Uint8Array(wasmInstance.exports.memory.buffer);
+      let end = ptr;
+      while (memory[end] !== 0) {
+        end++;
+      }
+      return decoder.decode(new Uint8Array(wasmInstance.exports.memory.buffer, ptr, end - ptr));
+    }
+
+    function allocateAndWriteString(str) {
+      const bytes = encoder.encode(str);
+      const len = bytes.length;
+      const ptr = wasmInstance.exports.alloc_memory(len);
+      const heap = new Uint8Array(wasmInstance.exports.memory.buffer, ptr, len);
+      heap.set(bytes);
+      return { ptr, len };
+    }
+
+    wasmTokenizer = {
+      countTokens: (text) => {
+        if (!text) return 0;
+        const { ptr, len } = allocateAndWriteString(text);
+        try {
+          return wasmInstance.exports.count_tokens(ptr, len);
+        } finally {
+          wasmInstance.exports.free_memory(ptr, len);
+        }
+      },
+      smartContextCompress: (text, targetTokenLimit, leadTokenReserve) => {
+        if (!text) return '';
+        const { ptr: textPtr, len: textLen } = allocateAndWriteString(text);
+        let retPtr = null;
+        try {
+          retPtr = wasmInstance.exports.get_compress_ptr(textPtr, textLen, targetTokenLimit, leadTokenReserve);
+          const resultStr = getStringFromWasmMemory(retPtr);
+          return resultStr;
+        } finally {
+          wasmInstance.exports.free_memory(textPtr, textLen);
+          if (retPtr !== null) {
+            wasmInstance.exports.free_compress_ptr(retPtr);
+          }
+        }
+      }
+    };
+
+    console.log('[Scribe Tokenizer] WASM Tokenizer successfully initialized.');
+    return wasmTokenizer;
+  } catch (error) {
+    console.warn('[Scribe Tokenizer] WASM could not be initialized. Falling back to proxy estimators.', error);
+    return null;
+  }
+}
+
+/**
+ * Splits a long text string into safe token-sized chunks using the WASM tokenizer.
+ * Automatically falls back to character-based chunking if the WASM core is not available.
+ * @param {string} text
+ * @param {number} tokenLimit
+ * @param {object|null} tokenizer
+ * @returns {string[]}
+ */
+function splitTranscriptIntoTokenChunks(text, tokenLimit, tokenizer) {
+  if (!text) return [];
+  if (!tokenizer) {
+    const charLimit = tokenLimit * 4;
+    return splitTranscriptIntoChunks(text, charLimit);
+  }
+
+  const totalTokens = tokenizer.countTokens(text);
+  if (totalTokens <= tokenLimit) {
+    return [text];
+  }
+
+  const chunks = [];
+  const words = text.split(/(\s+)/);
+  let currentChunkWords = [];
+  let currentChunkTokens = 0;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    if (word === '') continue;
+
+    const wordTokens = tokenizer.countTokens(word);
+
+    if (currentChunkTokens + wordTokens > tokenLimit) {
+      if (currentChunkWords.length > 0) {
+        chunks.push(currentChunkWords.join(''));
+        currentChunkWords = [word];
+        currentChunkTokens = wordTokens;
+      } else {
+        chunks.push(word);
+        currentChunkWords = [];
+        currentChunkTokens = 0;
+      }
+    } else {
+      currentChunkWords.push(word);
+      currentChunkTokens += wordTokens;
+    }
+  }
+
+  if (currentChunkWords.length > 0) {
+    chunks.push(currentChunkWords.join(''));
+  }
+
+  return chunks;
+}
+
+/**
+
  * Retrieve the saved Gemini model selection from chrome.storage.local.
  * Defaults to 'gemini-3.1-flash-lite-preview' as requested.
  * @returns {Promise<string>}
@@ -166,7 +307,7 @@ function getModelLimits(modelName) {
     };
   }
   return {
-    maxOutputTokens: 2048,
+    maxOutputTokens: 4096,
     chunkLimit: 20000,
     groundingLimit: 100000
   };
@@ -207,6 +348,92 @@ async function fetchWithRetry(url, options, maxRetries = 5) {
       }
       throw error;
     }
+  }
+}
+
+/**
+ * Robust utility to clean up and defensively repair truncated JSON arrays and objects.
+ * Particularly helpful when model output token limits slice responses mid-generation.
+ * @param {string} rawStr
+ * @returns {string} Fully cleaned and closed JSON-compliant string.
+ */
+function cleanAndRepairJson(rawStr) {
+  if (!rawStr) return '';
+  let cleanStr = rawStr.trim();
+
+  // Strips common markdown wrap headers if present (```json ... ```)
+  if (cleanStr.startsWith("```json")) cleanStr = cleanStr.substring(7);
+  else if (cleanStr.startsWith("```")) cleanStr = cleanStr.substring(3);
+  if (cleanStr.endsWith("```")) cleanStr = cleanStr.substring(0, cleanStr.length - 3);
+  cleanStr = cleanStr.trim();
+
+  // 1. Double Quotes String balancing:
+  // If truncated mid-string literal, close the quote boundary first
+  const doubleQuotes = (cleanStr.match(/"/g) || []).length;
+  if (doubleQuotes % 2 !== 0) {
+    cleanStr += '"';
+  }
+
+  // 2. Count opening vs closing markers and balance them out defensively
+  const openBraces = (cleanStr.match(/\{/g) || []).length;
+  const closeBraces = (cleanStr.match(/\}/g) || []).length;
+  const openBrackets = (cleanStr.match(/\[/g) || []).length;
+  const closeBrackets = (cleanStr.match(/\]/g) || []).length;
+
+  // Patch missing closures safely to prevent JSON.parse() exceptions
+  if (openBrackets > closeBrackets) {
+    cleanStr += ' ]'.repeat(openBrackets - closeBrackets);
+  }
+  if (openBraces > closeBraces) {
+    cleanStr += ' }'.repeat(openBraces - closeBraces);
+  }
+
+  return cleanStr;
+}
+
+/**
+ * Safely cleans and parses JSON responses returned by Gemini API.
+ * Handles markdown wraps (```json) and leading/trailing non-JSON commentary.
+ * Uses cleanAndRepairJson internally for maximum resilience against mid-output truncation.
+ */
+function safeJsonParse(text) {
+  if (!text) {
+    throw new Error('Empty text content received, cannot parse JSON.');
+  }
+
+  let cleaned = text.trim();
+
+  // 1. Remove markdown code blocks if present
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '');
+    cleaned = cleaned.replace(/\s*```$/, '');
+  }
+  cleaned = cleaned.trim();
+
+  // 2. Locate starting boundary of JSON structure
+  const firstBrace = cleaned.indexOf('{');
+  const firstBracket = cleaned.indexOf('[');
+  let startIdx = -1;
+
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    startIdx = firstBrace;
+  } else if (firstBracket !== -1) {
+    startIdx = firstBracket;
+  }
+
+  if (startIdx !== -1) {
+    cleaned = cleaned.substring(startIdx);
+  }
+
+  // 3. Robust Repair clean to seal truncated structures
+  cleaned = cleanAndRepairJson(cleaned);
+
+  // 4. Attempt JSON parse
+  try {
+    return JSON.parse(cleaned);
+  } catch (error) {
+    console.error('[safeJsonParse] JSON.parse failure on cleaned/repaired string:', cleaned, error);
+    throw new Error(`JSON parse failure. Raw snippet: "${text.substring(0, 150)}..."`);
   }
 }
 
@@ -375,6 +602,113 @@ Security constraint:
 }
 
 /**
+ * Semantic Auto-Correction Pipeline using gemini-2.5-flash.
+ * Sanitizes live transcripts by correcting phonetic, technical jargon, and localized Vietlish STT errors.
+ * @param {string} rawTranscript
+ * @param {string} uiLanguage
+ * @returns {Promise<string>} Corrected transcript
+ */
+async function correctTranscriptPhonetics(rawTranscript, uiLanguage = 'vi') {
+  if (!rawTranscript || typeof rawTranscript !== 'string' || rawTranscript.trim() === '') {
+    return rawTranscript;
+  }
+
+  const apiKey = await getSavedApiKey();
+  if (!apiKey) {
+    throw new Error('API Key is not configured.');
+  }
+
+  const tokenizer = await initWasmTokenizer();
+  const limits = getModelLimits('gemini-2.5-flash');
+  const groundingLimit = limits.groundingLimit || 100000;
+
+  let transcriptToCorrect = rawTranscript;
+
+  if (tokenizer) {
+    const totalTokens = tokenizer.countTokens(transcriptToCorrect);
+    if (totalTokens > groundingLimit) {
+      console.warn(`[Auto-Correct] Raw transcript too large (${totalTokens} tokens). Compressing defensively to ${groundingLimit} tokens using WASM...`);
+      transcriptToCorrect = tokenizer.smartContextCompress(transcriptToCorrect, groundingLimit, 10000);
+    }
+  } else {
+    // If tokenizer is not loaded, check character length as fallback (1 token approx 4 chars, so groundingLimit * 4)
+    const charLimit = groundingLimit * 4;
+    if (transcriptToCorrect.length > charLimit) {
+      console.warn(`[Auto-Correct Proxy Fallback] Raw transcript too long (${transcriptToCorrect.length} chars). Truncating to fit within model constraints...`);
+      transcriptToCorrect = transcriptToCorrect.substring(transcriptToCorrect.length - charLimit);
+    }
+  }
+
+  const CORRECTION_SYSTEM_PROMPT = `
+You are an elite enterprise Speech-to-Text (STT) Phonetic Error Corrector.
+The incoming text contains severe phonetic translation errors, localized Vietlish typos, and shattered corporate technology jargon captured from raw web captions.
+
+Your Task: Clean, reconstruct, and map broken phonetic text back to their correct corporate, financial, and engineering terms based on the semantic context.
+
+Strict Rules:
+1. Automatically repair common phonetic errors and technology concepts (e.g., "đi bơi" -> "deploy", "đáp bo" -> "dashboard", "bút chét" -> "budget", "si ép ô" -> "CFO", "rao tơ" -> "router", "gờ dít" -> "git", "u át tê" -> "UAT").
+2. Cleanly strip conversational noise and filler phrases ("à", "ừm", "thì là", "nói chung là") without deleting critical context or technical metrics.
+3. Maintain all original speaker labels (e.g., "[Q.Anh]:", "Trần Đăng Khoa:") and preserve the chronological timeline configuration perfectly.
+4. Return ONLY the sanitized transcript lines. Do NOT wrap the answer in explanatory commentary, notes, or meta markdown markdown wrappers. Return raw plain text.
+`;
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          {
+            text: `Please correct the following raw meeting transcript based on the STT correction rules:\n\n<raw_transcript>\n${transcriptToCorrect}\n</raw_transcript>`
+          }
+        ]
+      }
+    ],
+    systemInstruction: {
+      parts: [
+        {
+          text: CORRECTION_SYSTEM_PROMPT
+        }
+      ]
+    },
+    generationConfig: {
+      temperature: 0.1, // Low temperature for high deterministic accuracy
+      topP: 0.95,
+      maxOutputTokens: 8192 // Ensure enough typing space for entire corrected transcript
+    }
+  };
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+  console.log('[Auto-Correct Pipeline] Sending raw transcript to gemini-2.5-flash phonetic correction gate...');
+  const response = await fetchWithRetry(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  }, 3);
+
+  if (!response.ok) {
+    let errorMsg = `HTTP Error ${response.status}: ${response.statusText}`;
+    try {
+      const errorJson = await response.json();
+      if (errorJson.error && errorJson.error.message) {
+        errorMsg = errorJson.error.message;
+      }
+    } catch (_) {}
+    throw new Error(errorMsg);
+  }
+
+  const result = await response.json();
+  const correctedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!correctedText) {
+    throw new Error('Gemini returned an empty correction response.');
+  }
+
+  console.log(`[Auto-Correct Pipeline] Completed correction successfully. Corrected transcript length: ${correctedText.length} chars.`);
+  return correctedText;
+}
+
+/**
  * Perform a rolling chunked summary of a long transcript.
  * @param {string} fullTranscript
  * @returns {Promise<any>} Polished JSON summary.
@@ -384,12 +718,36 @@ async function generateMeetingSummary(fullTranscript, uiLanguage = 'vi', onProgr
     throw new Error('The transcript is empty. Make sure the recording has captured audio segments first.');
   }
 
+  // Intercept and auto-correct using the Semantic Auto-Correction Pipeline
+  let cleanedTranscript = fullTranscript;
+  try {
+    console.log('[generateMeetingSummary] Initializing semantic auto-correction pre-processing gateway...');
+    const corrected = await correctTranscriptPhonetics(fullTranscript, uiLanguage);
+    if (corrected && corrected.trim() !== '') {
+      cleanedTranscript = corrected;
+      console.log('[generateMeetingSummary] Transcript successfully sanitized and corrected by phonetic gateway.');
+    }
+  } catch (error) {
+    console.warn('[generateMeetingSummary] Phonetic auto-correction gate failed or bypassed. Falling back to raw transcript.', error);
+    cleanedTranscript = fullTranscript;
+  }
+
   const model = await getSavedModel();
   const limits = getModelLimits(model);
   const apiKey = await getSavedApiKey();
-  const chunks = splitTranscriptIntoChunks(fullTranscript, limits.chunkLimit);
 
-  console.log(`Processing meeting summary. Total transcript length: ${fullTranscript.length} chars. Chunks to process: ${chunks.length}`);
+  const tokenizer = await initWasmTokenizer();
+  let chunks;
+  if (tokenizer) {
+    // WASM active: scale limits.chunkLimit (chars) to token approximation (approx 4 chars/token)
+    const tokenLimit = Math.floor(limits.chunkLimit / 4);
+    chunks = splitTranscriptIntoTokenChunks(cleanedTranscript, tokenLimit, tokenizer);
+    console.log(`[WASM Chunker] Processing meeting summary. Total transcript: ${cleanedTranscript.length} chars. Chunks (token limit: ${tokenLimit}): ${chunks.length}`);
+  } else {
+    // Fallback: character-based chunking
+    chunks = splitTranscriptIntoChunks(cleanedTranscript, limits.chunkLimit);
+    console.log(`[Fallback Chunker] Processing meeting summary. Total transcript: ${cleanedTranscript.length} chars. Chunks (char limit: ${limits.chunkLimit}): ${chunks.length}`);
+  }
 
   let currentSummaryJson = {
     topics: [],
@@ -434,15 +792,15 @@ Ensure you return a single fully consolidated JSON object matching the requested
     const responseText = await callGeminiApi(apiKey, prompt, true);
 
     try {
-      const parsed = JSON.parse(responseText.trim());
+      const parsed = safeJsonParse(responseText);
       if (isValidSummarySchema(parsed)) {
         currentSummaryJson = parsed;
       } else {
         console.warn('Gemini returned JSON matching wrong schema. Attempting smart adaptation...', parsed);
-        // Fallback schema adaptation
-        currentSummaryJson.topics = parsed.topics || currentSummaryJson.topics;
-        currentSummaryJson.decisions = parsed.decisions || currentSummaryJson.decisions;
-        currentSummaryJson.actionItems = parsed.actionItems || currentSummaryJson.actionItems;
+        // Fallback schema adaptation - hydrate missing keys safely with defaults
+        currentSummaryJson.topics = parsed.topics || currentSummaryJson.topics || [];
+        currentSummaryJson.decisions = parsed.decisions || currentSummaryJson.decisions || [];
+        currentSummaryJson.actionItems = parsed.actionItems || currentSummaryJson.actionItems || [];
       }
     } catch (parseError) {
       console.error(`Failed to parse Gemini response on chunk ${i + 1}:`, responseText, parseError);
@@ -498,7 +856,7 @@ Generate the polished final meeting intelligence report:
 
   try {
     const finalPolishedResponse = await callGeminiApi(apiKey, polishPrompt, true);
-    const finalData = JSON.parse(finalPolishedResponse.trim());
+    const finalData = safeJsonParse(finalPolishedResponse);
     if (isValidSummarySchema(finalData)) {
       // Clear summarization progress tracking upon success
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
@@ -547,14 +905,27 @@ async function chatWithMeeting(
   const limits = getModelLimits(model);
   let cleanTranscript = transcriptText.trim();
   
-  if (cleanTranscript.length > limits.groundingLimit) {
-    console.warn(`[RAG Warning] Transcript is too large (${cleanTranscript.length} chars). Applying smart context compression.`);
-    const leadSize = 10000;
-    const truncationNotice = `\n\n... [TRUNCATED - TRANSCRIPT COMPRESSED TO SURVIVE MODEL LIMITS] ...\n\n`;
-    const remainingLimit = limits.groundingLimit - leadSize - truncationNotice.length;
-    const leadContext = cleanTranscript.substring(0, leadSize);
-    const tailContext = cleanTranscript.substring(cleanTranscript.length - remainingLimit);
-    cleanTranscript = `${leadContext}${truncationNotice}${tailContext}`;
+  const tokenizer = await initWasmTokenizer();
+  if (tokenizer) {
+    // WASM active: scale limits.groundingLimit (chars) to token approximation (approx 4 chars/token)
+    const tokenLimit = Math.floor(limits.groundingLimit / 4);
+    const tokenCount = tokenizer.countTokens(cleanTranscript);
+    if (tokenCount > tokenLimit) {
+      console.warn(`[RAG WASM] Transcript is too large (${tokenCount} tokens). Applying high-fidelity WASM sliding-window compression (limit: ${tokenLimit} tokens).`);
+      const leadReserve = 10000; // Preserve exactly 10,000 tokens for Agenda/Intro
+      cleanTranscript = tokenizer.smartContextCompress(cleanTranscript, tokenLimit, leadReserve);
+    }
+  } else {
+    // Fallback: character-based context compression
+    if (cleanTranscript.length > limits.groundingLimit) {
+      console.warn(`[RAG Warning] Transcript is too large (${cleanTranscript.length} chars). Applying legacy smart context compression.`);
+      const leadSize = 10000;
+      const truncationNotice = `\n\n... [TRUNCATED - TRANSCRIPT COMPRESSED TO SURVIVE MODEL LIMITS] ...\n\n`;
+      const remainingLimit = limits.groundingLimit - leadSize - truncationNotice.length;
+      const leadContext = cleanTranscript.substring(0, leadSize);
+      const tailContext = cleanTranscript.substring(cleanTranscript.length - remainingLimit);
+      cleanTranscript = `${leadContext}${truncationNotice}${tailContext}`;
+    }
   }
 
   // Client-side Sanitization for basic Prompt Injections
@@ -756,7 +1127,7 @@ ${sopText || 'Không có tài liệu SOP nào được cung cấp.'}
 
   const responseText = await callGeminiApi(apiKey, prompt, true);
   try {
-    const result = JSON.parse(responseText.trim());
+    const result = safeJsonParse(responseText);
     return {
       status: result.status || 'not_found',
       solution: result.solution || 'Not found in provided SOP documents.',
@@ -775,29 +1146,32 @@ ${sopText || 'Không có tài liệu SOP nào được cung cấp.'}
   }
 }
 
-// Export module
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     generateMeetingSummary,
+    correctTranscriptPhonetics,
     getSavedApiKey,
     getSavedModel,
     splitTranscriptIntoChunks,
     isValidSummarySchema,
     chatWithMeeting,
     solveDifficultyWithSop,
-    callGeminiApi
+    callGeminiApi,
+    safeJsonParse
   };
 } else {
   // Bind to global scope (window or self) for content scripts or background service workers
   const globalScope = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : this);
   globalScope.geminiService = {
     generateMeetingSummary,
+    correctTranscriptPhonetics,
     getSavedApiKey,
     getSavedModel,
     splitTranscriptIntoChunks,
     isValidSummarySchema,
     chatWithMeeting,
     solveDifficultyWithSop,
-    callGeminiApi
+    callGeminiApi,
+    safeJsonParse
   };
 }

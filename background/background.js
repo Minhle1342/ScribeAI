@@ -850,18 +850,41 @@ async function triggerSummarizationWorkflow() {
   updateGlobalState('SUMMARIZING');
 
   try {
-    // 1. Retrieve full compiled transcript
+    // 1. Retrieve full compiled transcript with smart adaptive mode fallback
     let fullTranscript = '';
-    const storageMode = await chrome.storage.local.get(['captureMode']);
-    const currentMode = storageMode.captureMode || 'websocket';
+    const storageData = await chrome.storage.local.get(['captureMode', 'gmeetCaptions', 'lastCompiledTranscript']);
+    const currentMode = storageData.captureMode || 'websocket';
+    const gmeetCaptions = storageData.gmeetCaptions || {};
+    const lastCompiled = storageData.lastCompiledTranscript || '';
 
+    // First attempt: respect the chosen mode
     if (currentMode === 'gmeet' || currentMode === 'teams') {
-      const storage = await chrome.storage.local.get(['gmeetCaptions']);
-      const captions = storage.gmeetCaptions || {};
-      const sortedBlocks = Object.values(captions).sort((a, b) => a.timestamp - b.timestamp);
-      fullTranscript = sortedBlocks.map(b => `[${b.speaker}]: ${b.text}`).join('\n');
+      if (Object.keys(gmeetCaptions).length > 0) {
+        const sortedBlocks = Object.values(gmeetCaptions).sort((a, b) => a.timestamp - b.timestamp);
+        fullTranscript = sortedBlocks.map(b => `[${b.speaker}]: ${b.text}`).join('\n');
+      }
     } else {
       fullTranscript = await getCompiledTranscript();
+    }
+
+    // Fallback 1: If primary mode returned empty, try the other mode
+    if (!fullTranscript || fullTranscript.trim() === '') {
+      if (currentMode === 'gmeet' || currentMode === 'teams') {
+        console.log('[Background] GMeet/Teams captions empty. Falling back to WebSocket database...');
+        fullTranscript = await getCompiledTranscript();
+      } else {
+        console.log('[Background] WebSocket database empty. Falling back to GMeet/Teams captions...');
+        if (Object.keys(gmeetCaptions).length > 0) {
+          const sortedBlocks = Object.values(gmeetCaptions).sort((a, b) => a.timestamp - b.timestamp);
+          fullTranscript = sortedBlocks.map(b => `[${b.speaker}]: ${b.text}`).join('\n');
+        }
+      }
+    }
+
+    // Fallback 2: Try last compiled transcript
+    if (!fullTranscript || fullTranscript.trim() === '') {
+      console.log('[Background] Both primary and fallback empty. Trying lastCompiledTranscript...');
+      fullTranscript = lastCompiled;
     }
 
     console.log('Loaded compiled transcript. Size:', fullTranscript.length);
@@ -1003,3 +1026,4 @@ function updateGlobalState(state, errorMessage = null) {
     }).catch(() => {});
   }
 }
+
