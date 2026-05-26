@@ -223,3 +223,102 @@ pub extern "C" fn free_memory(ptr: *mut u8, size: usize) {
         }
     }
 }
+
+// ==========================================
+// Graphics / Pixel Processing Sub-system
+// ==========================================
+
+use image::{ImageBuffer, Rgba, imageops::FilterType};
+use image::codecs::jpeg::JpegEncoder;
+
+// Global variables to store the encoded JPEG bytes and its size so JS can retrieve them
+static mut ENCODED_JPEG_PTR: *mut u8 = std::ptr::null_mut();
+static mut ENCODED_JPEG_LEN: usize = 0;
+
+#[no_mangle]
+pub extern "C" fn get_encoded_ptr() -> *mut u8 {
+    unsafe { ENCODED_JPEG_PTR }
+}
+
+#[no_mangle]
+pub extern "C" fn get_encoded_len() -> usize {
+    unsafe { ENCODED_JPEG_LEN }
+}
+
+#[no_mangle]
+pub extern "C" fn free_encoded_buffer() {
+    unsafe {
+        if !ENCODED_JPEG_PTR.is_null() {
+            let _ = Vec::from_raw_parts(ENCODED_JPEG_PTR, ENCODED_JPEG_LEN, ENCODED_JPEG_LEN);
+            ENCODED_JPEG_PTR = std::ptr::null_mut();
+            ENCODED_JPEG_LEN = 0;
+        }
+    }
+}
+
+fn process_canvas_capture_core(
+    raw_pixels: &[u8],
+    width: u32,
+    height: u32,
+    target_width: u32,
+    quality: u8,
+) -> Result<Vec<u8>, &'static str> {
+    if raw_pixels.len() != (width * height * 4) as usize {
+        return Err("Pixel data length mismatch");
+    }
+
+    let img: ImageBuffer<Rgba<u8>, &[u8]> = ImageBuffer::from_raw(width, height, raw_pixels)
+        .ok_or("Failed to create image buffer")?;
+
+    let final_width = if width > target_width { target_width } else { width };
+    let final_height = ((height as f32) * (final_width as f32) / (width as f32)) as u32;
+
+    let resized_img = image::imageops::resize(&img, final_width, final_height, FilterType::Triangle);
+
+    let mut jpeg_bytes = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, quality);
+
+    let rgb_img = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::from_raw(
+        final_width,
+        final_height,
+        resized_img.pixels().flat_map(|pixel| {
+            let [r, g, b, _a] = pixel.0;
+            std::iter::once(r).chain(std::iter::once(g)).chain(std::iter::once(b))
+        }).collect()
+    ).ok_or("Failed to convert RGBA to RGB buffer")?;
+
+    encoder.encode_image(&rgb_img)
+        .map_err(|_| "Failed to encode JPEG")?;
+
+    Ok(jpeg_bytes)
+}
+
+#[no_mangle]
+pub extern "C" fn process_canvas_capture(
+    raw_pixels_ptr: *const u8,
+    raw_pixels_len: usize,
+    width: u32,
+    height: u32,
+    target_width: u32,
+    quality: u8,
+) -> i32 {
+    if raw_pixels_ptr.is_null() || raw_pixels_len == 0 {
+        return -1;
+    }
+
+    let raw_pixels = unsafe { std::slice::from_raw_parts(raw_pixels_ptr, raw_pixels_len) };
+
+    match process_canvas_capture_core(raw_pixels, width, height, target_width, quality) {
+        Ok(encoded) => {
+            unsafe {
+                free_encoded_buffer();
+                let mut encoded_vec = encoded;
+                ENCODED_JPEG_PTR = encoded_vec.as_mut_ptr();
+                ENCODED_JPEG_LEN = encoded_vec.len();
+                std::mem::forget(encoded_vec);
+            }
+            0
+        }
+        Err(_) => -2
+    }
+}

@@ -50,7 +50,8 @@
     {
       "resources": [
         "icons/*",
-        "services/db.js"
+        "services/db.js",
+        "wasm/tokenizer_core.wasm"
       ],
       "matches": [
         "<all_urls>"

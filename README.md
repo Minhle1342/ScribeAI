@@ -109,6 +109,13 @@ Tiện ích đã được nâng cấp mạnh mẽ với các tính năng cốt l
 * **Quy trình tối ưu trải nghiệm (UX)**:
   * **Chụp ảnh sạch**: Tự động ẩn bảng điều khiển Scribe AI trong `150ms` trước khi chụp ảnh màn hình bằng `captureVisibleTab` để tránh bảng điều khiển che khuất nội dung trang web.
   * **Khung vẽ Glowing Neon**: Vẽ vùng chọn tùy ý bằng chuột trái qua một lớp canvas phủ toàn màn hình với hiệu ứng làm tối nền và viền sáng neon tím (`#a855f7`) cao cấp.
+  * **Đường ống Tăng tốc Đồ họa Rust WASM (Rust WASM Graphics Core)** 🚀:
+    * Thay thế hoàn toàn bộ giải nén `.toDataURL()` đồng bộ vốn gây gián đoạn khung hình (Main-Thread UI Freeze) trên các màn hình Retina & Ultra-HD 4K.
+    * Chuyển dữ liệu mảng byte điểm ảnh thô (`Uint8ClampedArray` từ `getImageData`) trực tiếp qua bộ nhớ tuyến tính (Linear Memory Heap) của WebAssembly.
+    * Sử dụng Rust Crate tối ưu (`image` với bộ lọc `Triangle`) để thực hiện các phép toán ma trận dịch chuyển tọa độ, chia tỷ lệ hình ảnh (resizing) mượt mà và nén JPEG chất lượng cao tức thời trong nhân CPU độc lập.
+    * Triển khai bộ chuyển đổi nhị phân sang Base64 tối ưu không giới hạn stack để chuyển tải nhanh chóng hình ảnh JPEG nén sang API Gemini Vision.
+  * **Cơ chế Dự phòng Kép (Double-Buffered Resilient Fallback)**:
+    * Nếu module WebAssembly chưa sẵn sàng hoặc gặp lỗi bộ nhớ cục bộ, hệ thống sẽ tự động kích hoạt bộ dự phòng trong suốt sang cơ chế vẽ và nén canvas mặc định của trình duyệt để đảm bảo tuyệt đối không bị đứt gãy luồng trải nghiệm người dùng.
   * **Thanh công cụ nổi (Floating Action Bar)**: Tự động tính toán vị trí nổi tối ưu phía trên vùng chọn để cung cấp các tác vụ dịch thuật nhanh hoặc sao chép chữ OCR.
   * **Dịch thuật đa ngôn ngữ qua Gemini Vision**: Hỗ trợ nhận diện và dịch trực tiếp sang các ngôn ngữ **Tiếng Việt**, **English**, **Français** thông qua sức mạnh xử lý đa phương tiện của mô hình Gemini Vision gửi an toàn từ background worker.
   * **Kết quả Glassmorphism & Hủy nhanh**: Hiển thị kết quả trong một hộp thoại nổi thiết kế Glassmorphism tuyệt đẹp có hỗ trợ copy 1-click, đồng thời hỗ trợ phím tắt `Escape` để hủy bỏ chế độ chụp màn hình tức thì.

@@ -2594,6 +2594,106 @@ function exportSummaryAsHTML(summary) {
     };
   }
 
+  let wasmGraphicsInstance = null;
+  let wasmGraphicsLoaded = false;
+
+  async function initGraphicsWasm() {
+    if (wasmGraphicsLoaded) return wasmGraphicsInstance;
+    try {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.getURL) {
+        return null;
+      }
+      console.log('[Scribe Graphics WASM] Attempting to load WASM core...');
+      const wasmUrl = chrome.runtime.getURL('wasm/tokenizer_core.wasm');
+      const response = await fetch(wasmUrl);
+      if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+      const buffer = await response.arrayBuffer();
+
+      const importObject = {
+        env: {
+          panic: () => {
+            console.error('[WASM] Panic occurred inside WebAssembly core.');
+          }
+        }
+      };
+
+      const { instance } = await WebAssembly.instantiate(buffer, importObject);
+      wasmGraphicsInstance = instance;
+      wasmGraphicsLoaded = true;
+      console.log('[Scribe Graphics WASM] Core successfully initialized.');
+      return wasmGraphicsInstance;
+    } catch (error) {
+      console.warn('[Scribe Graphics WASM] WASM could not be initialized. Falling back to JS canvas.', error);
+      return null;
+    }
+  }
+
+  async function processCanvasWithWasm(rawPixels, width, height, targetWidth, quality) {
+    const wasm = await initGraphicsWasm();
+    if (!wasm) return null;
+
+    const len = rawPixels.length; // width * height * 4
+    const ptr = wasm.exports.alloc_memory(len);
+    if (!ptr) {
+      console.error('[WASM] Failed to allocate memory for pixels.');
+      return null;
+    }
+
+    try {
+      // Copy raw pixels (Uint8ClampedArray) into WASM linear memory heap
+      const heap = new Uint8Array(wasm.exports.memory.buffer, ptr, len);
+      heap.set(rawPixels);
+
+      // Call processing function
+      const result = wasm.exports.process_canvas_capture(
+        ptr,
+        len,
+        width,
+        height,
+        targetWidth,
+        quality
+      );
+
+      if (result !== 0) {
+        console.error(`[WASM] process_canvas_capture failed with error code: ${result}`);
+        return null;
+      }
+
+      // Retrieve JPEG bytes pointer and length
+      const jpegPtr = wasm.exports.get_encoded_ptr();
+      const jpegLen = wasm.exports.get_encoded_len();
+
+      if (!jpegPtr || jpegLen === 0) {
+        console.error('[WASM] JPEG output pointer or length is invalid.');
+        return null;
+      }
+
+      // Copy encoded bytes from WASM linear memory
+      const jpegBytes = new Uint8Array(wasm.exports.memory.buffer, jpegPtr, jpegLen);
+      const outputBytes = new Uint8Array(jpegBytes);
+
+      // Free the encoded buffer inside WASM
+      wasm.exports.free_encoded_buffer();
+
+      return outputBytes;
+    } catch (err) {
+      console.error('[WASM] processCanvasWithWasm failed:', err);
+      return null;
+    } finally {
+      // Always free the input pixels memory
+      wasm.exports.free_memory(ptr, len);
+    }
+  }
+
+  function uint8ArrayToBase64(bytes) {
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
   async function executeVisionAction(mode, x, y, w, h, img, targetLang, dpr) {
     try {
       if (!checkContextValidity()) return;
@@ -2614,40 +2714,82 @@ function exportSummaryAsHTML(summary) {
         base64Data = lastActiveCropBase64;
       } else {
         const dprScale = dpr || window.devicePixelRatio || 1;
-        
-        // Safety ceilings on cropped boundaries (Clamp to maximum 1280px)
-        const MAX_DIMENSION = 1280;
-        let targetW = w;
-        let targetH = h;
-        if (w > MAX_DIMENSION || h > MAX_DIMENSION) {
-          if (w > h) {
-            targetW = MAX_DIMENSION;
-            targetH = Math.round((h * MAX_DIMENSION) / w);
-          } else {
-            targetH = MAX_DIMENSION;
-            targetW = Math.round((w * MAX_DIMENSION) / h);
-          }
-        }
+        const srcX = x * dprScale;
+        const srcY = y * dprScale;
+        const srcW = w * dprScale;
+        const srcH = h * dprScale;
 
+        // Create canvas to retrieve original raw high-DPI pixels
         const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = targetW;
-        cropCanvas.height = targetH;
+        cropCanvas.width = srcW;
+        cropCanvas.height = srcH;
         const cropCtx = cropCanvas.getContext('2d');
         
         cropCtx.drawImage(
           img,
-          x * dprScale,
-          y * dprScale,
-          w * dprScale,
-          h * dprScale,
-          0, 0, targetW, targetH
+          srcX,
+          srcY,
+          srcW,
+          srcH,
+          0, 0, srcW, srcH
         );
-        
-        const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.85);
-        base64Data = dataUrl.split(',')[1];
-        lastActiveCropBase64 = base64Data; // Cache base64 crop
 
-        // Deallocate canvas width/height to free memory instantly
+        let wasmSuccess = false;
+        try {
+          const imgData = cropCtx.getImageData(0, 0, srcW, srcH);
+          const rawPixels = imgData.data; // Uint8ClampedArray
+
+          // Offload resizing and JPEG encoding to high-performance Rust WASM
+          const MAX_DIMENSION = 1280;
+          const jpegBytes = await processCanvasWithWasm(rawPixels, srcW, srcH, MAX_DIMENSION, 85);
+          if (jpegBytes) {
+            base64Data = uint8ArrayToBase64(jpegBytes);
+            wasmSuccess = true;
+            console.log('[Scribe Graphics WASM] Successfully processed and encoded canvas crop via Rust!');
+          }
+        } catch (wasmErr) {
+          console.warn('[Scribe Graphics WASM] WASM processing failed, falling back to JS canvas:', wasmErr);
+        }
+
+        if (!wasmSuccess) {
+          // Robust Fallback: Fall back to native unoptimized JS canvas scaling and JPEG compression
+          const MAX_DIMENSION = 1280;
+          let targetW = w;
+          let targetH = h;
+          if (w > MAX_DIMENSION || h > MAX_DIMENSION) {
+            if (w > h) {
+              targetW = MAX_DIMENSION;
+              targetH = Math.round((h * MAX_DIMENSION) / w);
+            } else {
+              targetH = MAX_DIMENSION;
+              targetW = Math.round((w * MAX_DIMENSION) / h);
+            }
+          }
+
+          const fallbackCanvas = document.createElement('canvas');
+          fallbackCanvas.width = targetW;
+          fallbackCanvas.height = targetH;
+          const fallbackCtx = fallbackCanvas.getContext('2d');
+          
+          fallbackCtx.drawImage(
+            img,
+            srcX,
+            srcY,
+            srcW,
+            srcH,
+            0, 0, targetW, targetH
+          );
+          
+          const dataUrl = fallbackCanvas.toDataURL('image/jpeg', 0.85);
+          base64Data = dataUrl.split(',')[1];
+          fallbackCanvas.width = 0;
+          fallbackCanvas.height = 0;
+        }
+
+        // Cache base64 crop
+        lastActiveCropBase64 = base64Data;
+
+        // Deallocate primary canvas to prevent memory leaks
         cropCanvas.width = 0;
         cropCanvas.height = 0;
       }
